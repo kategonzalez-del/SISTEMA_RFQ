@@ -1,0 +1,572 @@
+{% extends 'RFQ/base_rfq.html' %}
+{% load static %}
+{% load i18n %}
+{% load custom_filters %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'css/RFQ/rfq.css' %}">
+<style>
+    .batch-tool-btn { font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
+    .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; }
+    .historical-badge { font-size: 0.68rem; font-weight: 500; display: block; margin-top: 4px; color: #64748b; font-family: 'Inter', sans-serif; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+        <div>
+            <h4 class="mb-1 fw-bold text-dark">Analizador Industrial de Planos y RFQ</h4>
+            <p class="text-muted small mb-0">Consolidación conjunta de geometrías 3D e inteligencia de materiales para NPI</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="?" class="btn btn-action-secondary px-3 py-2 small d-flex align-items-center shadow-sm">
+                <i class="bi bi-arrow-clockwise me-2"></i> Nuevo Análisis
+            </a>
+            <button type="button" class="btn btn-action-secondary px-3 py-2 small d-flex align-items-center shadow-sm" data-bs-toggle="modal" data-bs-target="#historyModal">
+                <i class="bi bi-clock-history me-2"></i> Historial de Lotes
+            </button>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12 col-xl-4 mb-4">
+            <div class="card card-dashboard p-4 h-100">
+                <h6 class="fw-bold mb-4 text-dark"><i class="bi bi-cloud-upload me-2 text-primary"></i>Carga de Documentación Técnica</h6>
+                
+                <form id="rfq-hybrid-form" method="POST" enctype="multipart/form-data" class="mb-4">
+                    {% csrf_token %}
+                    <div id="drop-zone" class="file-drop-zone mb-4 d-block w-100 text-center" style="cursor: pointer;">
+                        <div class="bg-light rounded-circle d-inline-flex p-3 mb-3">
+                            <i class="bi bi-folder-plus text-primary fs-3"></i>
+                        </div>
+                        <span class="fw-bold text-dark d-block mb-1">Arrastra archivos o haz clic aquí</span>
+                        <small class="text-muted d-block" style="font-size: 0.75rem;">Formatos aceptados: .PDF, .STEP, .STP, .STL</small>
+                    </div>
+                    <input type="file" id="rfq_file" accept=".pdf,.step,.stp,.stl" class="d-none" multiple>
+
+                    <div id="file-registry-block" class="d-none mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-1">
+                            <label class="small fw-bold text-muted text-uppercase mb-0">Estructura del Lote Actual</label>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input" type="checkbox" id="selectAllFiles" onclick="toggleAllCheckboxes(this)">
+                                    <label class="form-check-label small text-muted" style="font-size: 0.75rem;" for="selectAllFiles">Todos</label>
+                                </div>
+                                <div class="d-flex gap-1">
+                                    <button type="button" class="btn btn-outline-primary batch-tool-btn" onclick="applyClassificationToSelected('maestro')">🏢 Hacer Maestro</button>
+                                    <button type="button" class="btn btn-outline-info batch-tool-btn" onclick="applyClassificationToSelected('sub')">🧩 Hacer Sub</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="file-registry-list" class="list-group shadow-sm rounded-3 border" style="max-height: 220px; overflow-y: auto;"></div>
+                    </div>
+
+                    <button type="submit" id="submit-btn" class="btn btn-action-primary w-100 py-3 small shadow-sm">
+                        <i class="bi bi-play-circle-fill me-2"></i> Ejecutar Consolidación de Pesos
+                    </button>
+                </form>
+
+                <div id="progress-container" class="d-none border-top pt-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small fw-medium text-muted" id="progress-status-text">Inicializando...</span>
+                        <span class="small fw-bold text-primary" id="progress-percentage">0%</span>
+                    </div>
+                    <div class="progress rounded-pill bg-light" style="height: 8px;">
+                        <div id="progress-bar-fill" class="progress-bar bg-primary progress-bar-striped progress-bar-animated rounded-pill" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="border-top pt-4 mt-auto">
+                    <button class="btn btn-action-secondary w-100 py-2 small d-flex justify-content-between align-items-center" type="button" data-bs-toggle="collapse" data-bs-target="#catalogCollapse">
+                        <span><i class="bi bi-search me-2"></i> Catálogo Maestro de Resinas</span>
+                        <i class="bi bi-chevron-down small"></i>
+                    </button>
+                    <div class="collapse mt-3" id="catalogCollapse">
+                        <input type="text" id="catalogSearchInput" class="form-control form-control-sm mb-3 shadow-sm" placeholder="Buscar resina, código o proveedor...">
+                        <div class="table-responsive rounded-3 border bg-white shadow-sm" style="max-height: 280px; overflow-y: auto;">
+                            <table class="table table-sm table-hover mb-0 align-middle" style="font-size: 0.72rem;" id="catalogTable">
+                                <thead class="table-light sticky-top shadow-sm">
+                                    <tr>
+                                        <th class="ps-3">Código / Info</th>
+                                        <th>Familia</th>
+                                        <th>Descripción / Proveedor</th>
+                                        <th class="text-end pe-3">Precios (Act/Ant)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for mat in all_materials_catalog %}
+                                        <tr>
+                                            <td class="fw-bold text-primary ps-3">
+                                                {{ mat.material_code }}
+                                                <span class="historical-badge">
+                                                    <i class="bi bi-calendar-event text-secondary"></i> Modif: 
+                                                    {% if mat.last_purchase_date %}
+                                                        {{ mat.last_purchase_date|date:"Y-m-d" }}
+                                                    {% else %}
+                                                        Sin fecha
+                                                    {% endif %}
+                                                </span>
+                                            </td>
+                                            <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary px-2 py-1 rounded-pill">{{ mat.family }}</span></td>
+                                            <td>
+                                                <span class="text-dark fw-medium d-block">{{ mat.commercial_name }}</span>
+                                                <small class="text-muted">{{ mat.supplier }} | {{ mat.density }} g/cm³</small>
+                                            </td>
+                                            <td class="text-end pe-3">
+                                                <div class="text-success fw-bold">${{ mat.standard_price|default:"0.00" }}</div>
+                                                <div class="text-muted small font-monospace" style="font-size: 0.65rem;">
+                                                    Ant: {% if mat.last_price %}${{ mat.last_price|stringformat:".4f" }}{% else %}$0.0000{% endif %}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-8 mb-4">
+            <div id="results-wrapper-block" class="card card-dashboard p-4 h-100 d-none">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4 flex-wrap gap-2">
+                    <h5 class="fw-bold text-dark mb-0"><i class="bi bi-grid-1x2-fill me-2 text-primary"></i>Componentes Auditados</h5>
+                    <span class="badge bg-dark rounded-pill px-3 py-2 shadow-sm" id="lote-display-name">Lote Activo</span>
+                </div>
+
+                <div class="mb-4 bg-light p-3 rounded-3 border">
+                    <label class="small fw-bold text-muted mb-2 d-block text-uppercase">Documentos Validados:</label>
+                    <div class="d-flex flex-wrap gap-2" id="async-file-badges-container"></div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0 table-clean">
+                        <thead>
+                            <tr>
+                                <th style="width: 18%;">Número de Parte</th>
+                                <th style="width: 32%;">Descripción / Origen</th>
+                                <th style="width: 32%;">Especificaciones de Catálogo</th>
+                                <th style="width: 18%;" class="text-end pe-3">Peso / Volumen</th>
+                            </tr>
+                        </thead>
+                        <tbody id="async-components-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            {% if detected_components %}
+                <div class="card card-dashboard p-4 h-100 mt-4">
+                    <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4 flex-wrap gap-2">
+                        <h5 class="fw-bold text-dark mb-0"><i class="bi bi-folder-check me-2 text-success"></i>Consulta de Historial: {{ filename }}</h5>
+                        <span class="badge bg-success bg-opacity-10 text-success border border-success rounded-pill px-3 py-2 shadow-sm">Datos Recuperados</span>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table align-middle mb-0 table-clean">
+                            <thead>
+                                <tr>
+                                    <th style="width: 18%;">Número de Parte</th>
+                                    <th style="width: 32%;">Descripción / Origen</th>
+                                    <th style="width: 32%;">Especificaciones de Catálogo</th>
+                                    <th style="width: 18%;" class="text-end pe-3">Peso / Volumen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for component in detected_components %}
+                                    <tr>
+                                        <td class="fw-bold text-primary fs-6">{{ component.part_number|default:"Insumo / Adicional" }}</td>
+                                        <td>
+                                            <span class="d-block fw-bold text-dark mb-1">{{ component.bom_reference|split_origin_name }}</span>
+                                            <small class="text-muted d-block text-truncate" style="max-width: 250px; font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i> {{ component.bom_reference }}</small>
+                                        </td>
+                                        <td>
+                                            <div class="p-3 card-audit shadow-sm bg-white">
+                                                {% if component.detected_material %}
+                                                    <div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo</span></div>
+                                                    <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;">{{ component.detected_material.commercial_name }}</h6>
+                                                {% else %}
+                                                    <div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
+                                                    <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Req: {{ component.raw_material_text }}</h6>
+                                                {% endif %}
+                                                <div class="p-2 bg-light rounded text-secondary mt-2" style="font-size: 0.75rem; border-left: 3px solid #64748b;">
+                                                    <strong>Ficha:</strong> Fam: {{ component.detected_family }} | Color: {{ component.detected_color }}
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="text-end pe-3">
+                                            <div class="dual-weight-box text-start">
+                                                <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> {{ component.component_weight|default:"N/D" }} g</div>
+                                                <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> {{ component.component_weight|multiply_filter:0.00220462|round_filter:4|default:"N/D" }} lbs</div>
+                                                <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture me-1"></i> {{ component.component_volumen|default:"N/D" }} cm³</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="modal fade modal-history" id="historyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-md modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+            <div class="modal-header bg-dark text-white p-3 border-0" style="border-top-left-radius: 16px; border-top-right-radius: 16px;">
+                <h5 class="modal-title fw-bold fs-6"><i class="bi bi-clock-history me-2 text-warning"></i> Historial de Lotes</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                {% if past_analyses %}
+                    <div class="list-group list-group-flush">
+                        {% for past in past_analyses %}
+                            <a href="?history_id={{ past.id }}" class="list-group-item list-group-item-action p-3 d-flex justify-content-between align-items-center text-decoration-none">
+                                <div class="text-truncate me-3">
+                                    <strong class="text-dark d-block text-truncate small" style="max-width: 280px;">{{ past.material_text|default:past.uploaded_file.name }}</strong>
+                                    <span class="text-muted d-block small mt-1" style="font-size: 0.75rem;">ID #{{ past.id }} • {{ past.uploaded_at }}</span>
+                                </div>
+                                <span class="badge {% if past.status == 'failed' %}badge-status-failed{% else %}badge-status-completed{% endif %} px-2 py-1 rounded-2 small shadow-sm">
+                                    {% if past.status == 'failed' %}✕ Fallido{% else %}✓ Éxito{% endif %}
+                                </span>
+                            </a>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-5 bg-light">
+                        <i class="bi bi-inbox text-muted display-4 d-block mb-2"></i>
+                        <p class="text-muted mb-0 small fw-medium">No hay análisis registrados todavía.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const virtualStorage = new DataTransfer();
+    let fileMetaTypes = [];
+    
+    const zone = document.getElementById('drop-zone');
+    const input = document.getElementById('rfq_file');
+    const block = document.getElementById('file-registry-block');
+    const form = document.getElementById('rfq-hybrid-form');
+
+    // Manejador del candado para evitar doble apertura de archivos
+    zone.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (zone.dataset.isClicking === "true") return; 
+        zone.dataset.isClicking = "true";
+        
+        input.click();
+        
+        setTimeout(() => { zone.dataset.isClicking = "false"; }, 500);
+    });
+    
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('dragover'); appendFiles(e.dataTransfer.files); });
+    
+    // Limpieza de input tras selección
+    input.addEventListener('change', (e) => { 
+        appendFiles(e.target.files); 
+        e.target.value = ''; 
+    });
+
+    function appendFiles(files) {
+        Array.from(files).forEach(file => {
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (["pdf", "step", "stp", "stl"].includes(ext)) {
+                const exists = Array.from(virtualStorage.files).some(f => f.name === file.name && f.size === file.size);
+                if (!exists) {
+                    virtualStorage.items.add(file);
+                    const isHintSub = !file.name.includes('24-4451') || ext !== 'pdf'; 
+                    fileMetaTypes.push(isHintSub);
+                }
+            }
+        });
+        renderRegistry();
+    }
+
+    function renderRegistry() {
+        const listContainer = document.getElementById('file-registry-list');
+        listContainer.innerHTML = '';
+        const files = virtualStorage.files;
+
+        if (files.length > 0) {
+            block.classList.remove('d-none');
+            Array.from(files).forEach((file, index) => {
+                const isSub = fileMetaTypes[index];
+                const div = document.createElement('div');
+                div.className = 'list-group-item d-flex justify-content-between align-items-center p-2 bg-white';
+                
+                div.innerHTML = `
+                    <div class="d-flex align-items-center text-truncate me-2 small" style="max-width: 200px;">
+                        <input class="form-check-input file-checkbox me-2 mt-0" type="checkbox" value="${index}">
+                        <i class="bi ${file.name.endsWith('.pdf') ? 'bi-file-earmark-pdf text-danger' : 'bi-box text-info'} me-2"></i>
+                        <span class="fw-medium text-truncate">${file.name}</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <select class="form-select form-select-sm select-file-class" style="font-size: 0.72rem; padding: 2px 20px 2px 8px;" id="file-select-${index}" onchange="updateFileType(${index}, this.value)">
+                            <option value="maestro" ${!isSub ? 'selected' : ''}>🏢 Maestro</option>
+                            <option value="sub" ${isSub ? 'selected' : ''}>🧩 Subcomponente</option>
+                        </select>
+                        <button type="button" class="btn btn-sm text-danger p-0 border-0" onclick="dropIndexedFile(${index})"><i class="bi bi-x-circle"></i></button>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+            document.getElementById('selectAllFiles').checked = false;
+        } else { block.classList.add('d-none'); }
+    }
+
+    window.toggleAllCheckboxes = function(masterCheckbox) {
+        const checkboxes = document.querySelectorAll('.file-checkbox');
+        checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    };
+
+    window.applyClassificationToSelected = function(type) {
+        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+        
+        if (checkboxes.length === 0) { 
+            alert("Por favor, selecciona al menos un archivo marcando su casilla."); 
+            return; 
+        }
+
+        checkboxes.forEach(cb => {
+            const idx = parseInt(cb.value);
+            fileMetaTypes[idx] = (type === 'sub');
+            document.getElementById(`file-select-${idx}`).value = type;
+            cb.checked = false;
+        });
+        
+        document.getElementById('selectAllFiles').checked = false;
+    };
+
+    window.updateFileType = function(index, value) { fileMetaTypes[index] = (value === 'sub'); };
+
+    window.dropIndexedFile = function(index) {
+        const freshStorage = new DataTransfer();
+        let freshMetaTypes = [];
+        Array.from(virtualStorage.files).forEach((file, idx) => {
+            if (idx !== index) { freshStorage.items.add(file); freshMetaTypes.push(fileMetaTypes[idx]); }
+        });
+        while(virtualStorage.items.length > 0) { virtualStorage.items.clear(); }
+        Array.from(freshStorage.files).forEach(file => virtualStorage.items.add(file));
+        fileMetaTypes = freshMetaTypes;
+        renderRegistry();
+    };
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (virtualStorage.files.length === 0) { alert("Carga al menos un archivo técnico."); return; }
+
+        const submitBtn = document.getElementById('submit-btn');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const progressStatusText = document.getElementById('progress-status-text');
+        const progressPercentage = document.getElementById('progress-percentage');
+        
+        const resultsWrapper = document.getElementById('results-wrapper-block');
+        const asyncComponentsTable = document.getElementById('async-components-table-body');
+        const asyncBadgesContainer = document.getElementById('async-file-badges-container');
+        const loteDisplayName = document.getElementById('lote-display-name');
+
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Consolidando lote...`;
+        progressContainer.classList.remove('d-none');
+        
+        asyncComponentsTable.innerHTML = '';
+        asyncBadgesContainer.innerHTML = '';
+
+        const initialFormData = new FormData();
+        Array.from(virtualStorage.files).forEach(f => initialFormData.append('rfq_file', f));
+        
+        const typeMapping = {};
+        Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
+        initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
+        initialFormData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+
+        try {
+            const initResponse = await fetch('', { method: 'POST', body: initialFormData });
+            const initData = await initResponse.json();
+            
+            if (initData.status === 'initiated') {
+                const analysisId = initData.analysis_id;
+                const filesToProcess = initData.files;
+                const totalFiles = filesToProcess.length;
+                let completedCount = 0;
+
+                resultsWrapper.classList.remove('d-none');
+                loteDisplayName.textContent = `Operación Activa Lote #${analysisId}`;
+
+                const processPromises = filesToProcess.map(async (fileInfo) => {
+                    const isSub = typeMapping[fileInfo.name] || false;
+                    progressStatusText.textContent = `Analizando: ${fileInfo.name}`;
+                    
+                    // RUTA JS CORREGIDA
+                    const singleFileResponse = await fetch('/analisis/rfq/process-file-async/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            analysis_id: analysisId,
+                            file_name: fileInfo.name,
+                            file_path: fileInfo.path,
+                            ext: fileInfo.ext,
+                            is_subcomponent: isSub
+                        })
+                    });
+                    
+                    const resData = await singleFileResponse.json();
+
+                    completedCount++;
+                    const percentage = Math.round((completedCount / totalFiles) * 100);
+                    progressBarFill.style.width = `${percentage}%`;
+                    progressPercentage.textContent = `${percentage}%`;
+
+                    if (resData.success) {
+                        const badgeSpan = document.createElement('span');
+                        badgeSpan.className = 'badge bg-light border text-dark px-2.5 py-1.5 rounded-2 small shadow-sm pulse-loading';
+                        badgeSpan.innerHTML = `<i class="bi bi-file-earmark-check text-success me-1"></i> ${resData.classification}`;
+                        asyncBadgesContainer.appendChild(badgeSpan);
+
+                        if (resData.type === '3d') {
+                            const row3d = document.createElement('tr');
+                            row3d.innerHTML = `
+                                <td class="fw-bold text-info"><i class="bi bi-cube-solid me-1"></i> Sólido CAD</td>
+                                <td>
+                                    <strong class="text-dark d-block small text-uppercase">${resData.file_name}</strong>
+                                    <small class="text-muted d-block" style="font-size: 0.72rem;">Estructura matemática cargada en memoria.</small>
+                                </td>
+                                <td>
+                                    <div class="spec-3d-box shadow-sm">
+                                        <span class="badge bg-info bg-opacity-10 text-info border border-info rounded-2 px-2 py-0.5 small fw-bold mb-1">Geometría Indexada</span>
+                                        <p class="small text-muted mb-0" style="font-size: 0.75rem;">Volumen CAD ligado para resolver densidades plásticas del lote.</p>
+                                    </div>
+                                </td>
+                                <td class="text-end pe-3">
+                                    <div class="dual-weight-box text-start">
+                                        <div class="mb-1 text-muted fw-bold"><i class="bi bi-box-seam me-1"></i> Peso: N/D</div>
+                                        <div class="fw-bold text-info"><i class="bi bi-moisture me-1"></i> Vol: <span>${resData.volume_cm3} cm³</span></div>
+                                    </div>
+                                </td>
+                            `;
+                            asyncComponentsTable.appendChild(row3d);
+                        } 
+                        else if (resData.parts && resData.parts.length > 0) {
+                            resData.parts.forEach(part => {
+                                const row = document.createElement('tr');
+                                
+                                let insertosHtml = '';
+                                if (part.secondary_elements && part.secondary_elements.length > 0) {
+                                    insertosHtml = `
+                                        <div class="mt-2 flex-wrap gap-1">
+                                            ${part.secondary_elements.map(elem => `<span class="badge bg-dark bg-opacity-10 text-dark border border-dark rounded-2 p-1 small" style="font-size: 0.7rem;"><i class="bi bi-paperclip"></i> ${elem}</span>`).join('')}
+                                        </div>`;
+                                }
+    
+                                let materialHeaderHtml = part.detected_material ? `
+                                    <div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold"><i class="bi bi-shield-check me-1"></i> Match Catálogo: ${part.material_code}</span></div>
+                                    <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;"><i class="bi bi-file-earmark-text me-1"></i> ${part.raw_material_text}</h6>
+                                    <div class="text-muted small mb-1">Validado en Catálogo: <span class="text-secondary fw-medium">${part.detected_material}</span></div>
+                                ` : `
+                                    <div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold"><i class="bi bi-shield-exclamation me-1"></i> No Registrado en Catálogo</span></div>
+                                    <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Requerimiento Plano: ${part.raw_material_text}</h6>`;
+    
+                                row.innerHTML = `
+                                    <td class="fw-bold text-primary fs-6">${part.part_number}</td>
+                                    <td>
+                                        <span class="d-block text-dark fw-bold mb-1">${part.description}</span>
+                                        <small class="text-muted d-block" style="font-size: 0.72rem; line-height: 1.3;"><i class="bi bi-info-circle me-1"></i> ${part.bom_reference}</small>
+                                        ${insertosHtml}
+                                        <div class="mt-2">
+                                            <span class="badge-indicator bg-secondary bg-opacity-10 text-secondary border border-secondary"><i class="bi bi-cpu me-1"></i> ${part.data_source}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="p-3 card-audit shadow-sm bg-white">
+                                            ${materialHeaderHtml}
+                                            <div class="text-muted small mb-1.5" style="font-size: 0.78rem;"><i class="bi bi-arrow-left-right text-warning me-1"></i> Resina Alterna en Plano: <span class="fw-bold text-dark">${part.alternative_resin}</span></div>
+                                            <div class="p-2 bg-light rounded text-secondary mt-1" style="font-size: 0.75rem; border-left: 3px solid #64748b;"><strong>Ficha Técnica:</strong> Familia: ${part.detected_family} | Color/Pigm: ${part.color_completo || part.detected_color} | Proveedor: ${part.detected_supplier}</div>
+                                        </div>
+                                    </td>
+                                    <td class="text-end pe-3">
+                                        <div class="dual-weight-box text-start">
+                                            <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> ${part.component_weight ? part.component_weight + ' g' : 'N/D'}</div>
+                                            <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> ${part.component_weight_lbs ? part.component_weight_lbs + ' lbs' : 'N/D'}</div>
+                                            <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture text-info me-1"></i> ${part.component_volumen ? part.component_volumen + ' cm³' : 'N/D'}</div>
+                                        </div>
+                                    </td>
+                                `;
+                                asyncComponentsTable.appendChild(row);
+                            });
+                        } else { renderRowAnalysisError(fileInfo.name, null); }
+                    } else { renderRowAnalysisError(fileInfo.name, resData.error); }
+                });
+
+                await Promise.all(processPromises);
+
+                // RUTA JS CORREGIDA
+                const finalStatusRes = await fetch('/analisis/rfq/finalize-analysis/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ analysis_id: analysisId })
+                });
+                const finalStatusData = await finalStatusRes.json();
+
+                if (finalStatusData.final_status === 'failed') {
+                    progressStatusText.textContent = "El lote finalizó, pero no se recuperaron datos válidos.";
+                    progressBarFill.className = "progress-bar bg-danger rounded-pill";
+                } else {
+                    progressStatusText.textContent = "¡Análisis e inyección completa de datos!";
+                    progressBarFill.className = "progress-bar bg-success rounded-pill";
+                }
+                if(finalStatusData.suggested_name) { loteDisplayName.textContent = finalStatusData.suggested_name; }
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
+            }
+        } catch (err) {
+            console.error(err);
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
+        }
+    });
+
+    function renderRowAnalysisError(filename, customErrorMessage) {
+        const asyncComponentsTable = document.getElementById('async-components-table-body');
+        const rowError = document.createElement('tr');
+        const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles (Resultados Null).";
+        rowError.innerHTML = `
+            <td class="text-center"><i class="bi bi-x-circle-fill text-danger fs-5"></i></td>
+            <td><strong class="text-dark d-block small">${filename}</strong></td>
+            <td>
+                <div class="alert alert-danger mb-0 p-2 text-start rounded-3 small" style="border-left: 4px solid #dc3545;">
+                    <strong>Fallo de Escaneo:</strong> ${motivoError}
+                </div>
+            </td>
+            <td class="text-end text-muted small pe-3">N/D</td>
+        `;
+        asyncComponentsTable.appendChild(rowError);
+    }
+
+    document.getElementById('catalogSearchInput').addEventListener('keyup', function(e) {
+        const value = e.target.value.toLowerCase().trim();
+        const rows = document.querySelectorAll('#catalogTable tbody tr');
+        rows.forEach(row => {
+            const match = row.textContent.toLowerCase().includes(value);
+            row.style.display = match ? '' : 'none';
+        });
+    });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}
