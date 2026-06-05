@@ -139,4 +139,4 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # gemini API
-GEMINI_API_KEY = "AIzaSyCrPIFIGCV-puWLIabyVSmq844LjCZSHCA"
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')

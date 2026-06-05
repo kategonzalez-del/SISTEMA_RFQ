@@ -1,9 +1,8 @@
-import trimesh
-
 def analyze_stl(file_path):
+    # Movemos trimesh aquí adentro para que se cargue bajo demanda
+    import trimesh
 
     mesh = trimesh.load(file_path)
-
     volume_cm3 = mesh.volume / 1000
 
     return {
