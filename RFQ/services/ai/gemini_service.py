@@ -1,6 +1,8 @@
 
 from google import genai
 from django.conf import settings
+import os
+import google.generativeai as genai 
 
 api_key_dinamica = os.environ.get('GEMINI_API_KEY')
 genai.configure(api_key=api_key_dinamica)
