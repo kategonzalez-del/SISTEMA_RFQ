@@ -63,13 +63,18 @@ def upload_and_process_rfq(request):
             ext = os.path.splitext(u_file.name)[1].lower()
             all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': ext})
             if ext == '.pdf' and not primary_pdf:
-                primary_pdf = u_file
+                # Guardamos la referencia del archivo físico ya alojado en disco
+                primary_pdf = filename 
 
-        if not primary_pdf and uploaded_files:
-            primary_pdf = uploaded_files[0]
+        if not primary_pdf and all_saved_files:
+            # Si no hay PDF, tomamos el primer archivo del disco seguro
+            primary_pdf = all_saved_files[0]['name']
 
+        # MODIFICACIÓN DE BLINDAJE: 
+        # En lugar de pasar el objeto raw u_file que Linux borra de /tmp/, 
+        # le pasamos la ruta relativa del archivo que ya guardó fs.save()
         analysis = DrawingAnalysis.objects.create(
-            uploaded_file=primary_pdf,
+            uploaded_file=f"tmp/{primary_pdf}",
             raw_text="",
             gemini_raw_json={},
             status='processing'
