@@ -11,5 +11,6 @@ echo "Ejecutando tareas de Django..."
 python manage.py collectstatic --no-input
 python manage.py migrate
 
+# Cambia la última línea para que quede exactamente así (con S al final):
 echo "Poblando Catálogo Maestro de Resinas desde Excel de forma automática..."
-python manage.py import_material
+python manage.py import_materials
