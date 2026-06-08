@@ -10,14 +10,13 @@ from django.views.decorators.csrf import csrf_exempt
 from .models import Material, DrawingAnalysis, DrawingDetectedMaterial, PartComponent
 from .forms import DrawingUploadForm
 
-from RFQ.services.parsers.pdf_parser import (
-    extract_text_from_pdf, extract_volume, extract_weight, extract_color
-)
+#from RFQ.services.parsers.pdf_parser import (
+#    extract_text_from_pdf, extract_volume, extract_weight, extract_color)
 from RFQ.services.ai.structured_extractor import extract_rfq_data
 from RFQ.services.materials.embedding_matcher import match_material
 
-from RFQ.services.cad.step_parser import analyze_step
-from RFQ.services.cad.stl_parser import analyze_stl
+#from RFQ.services.cad.step_parser import analyze_step
+#from RFQ.services.cad.stl_parser import analyze_stl
 from django.db.models import Q
 
 def upload_and_process_rfq(request):
@@ -63,16 +62,12 @@ def upload_and_process_rfq(request):
             ext = os.path.splitext(u_file.name)[1].lower()
             all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': ext})
             if ext == '.pdf' and not primary_pdf:
-                # Guardamos la referencia del archivo físico ya alojado en disco
                 primary_pdf = filename 
 
         if not primary_pdf and all_saved_files:
-            # Si no hay PDF, tomamos el primer archivo del disco seguro
             primary_pdf = all_saved_files[0]['name']
 
-        # MODIFICACIÓN DE BLINDAJE: 
-        # En lugar de pasar el objeto raw u_file que Linux borra de /tmp/, 
-        # le pasamos la ruta relativa del archivo que ya guardó fs.save()
+       
         analysis = DrawingAnalysis.objects.create(
             uploaded_file=f"tmp/{primary_pdf}",
             raw_text="",
@@ -117,8 +112,10 @@ def process_single_file_async(request):
         if ext in ['.step', '.stp', '.stl']:
             try:
                 if ext in ['.step', '.stp']:
+                    from RFQ.services.cad.step_parser import analyze_step
                     threed_data = analyze_step(file_path)
                 else:
+                    from RFQ.services.cad.stl_parser import analyze_stl
                     threed_data = analyze_stl(file_path)
                 
                 volume_cm3 = threed_data.get('volume_cm3', 0)
@@ -138,6 +135,7 @@ def process_single_file_async(request):
 
         # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
         elif ext == '.pdf':
+            from RFQ.services.parsers.pdf_parser import extract_text_from_pdf, extract_volume, extract_weight
             raw_text = extract_text_from_pdf(file_path)
             analysis.raw_text += f"\n--- ORIGEN: {file_name} ---\n" + raw_text
             
@@ -149,13 +147,16 @@ def process_single_file_async(request):
                 analysis.estimated_volume = local_volume
             if local_weight and not analysis.estimated_weight:
                 analysis.estimated_weight = local_weight
-            analysis.save()
+            print(f"[DEBUG] Texto extraído ({len(raw_text)} chars): {raw_text[:300]}")
 
+            analysis.save()
+            
             try:
                 gemini_result = extract_rfq_data(raw_text)
                 raw_json = gemini_result.get('raw_response', '{}') if 'raw_response' in gemini_result else json.dumps(gemini_result)
                 clean_json = re.sub(r'^```json\s*|```$', '', raw_json, flags=re.MULTILINE).strip()
                 raw_data = json.loads(clean_json)
+                print(f"[DEBUG] raw_data tipo: {type(raw_data)}, contenido: {str(raw_data)[:200]}")
             except Exception:
                 raw_data = {}
 
@@ -294,7 +295,7 @@ def process_single_file_async(request):
                 'classification': classification_string,
                 'parts': parts_found_payload
             })
-
+    
     except Exception as general_err:
         return JsonResponse({'success': False, 'error': str(general_err)}, status=500)
 @csrf_exempt
