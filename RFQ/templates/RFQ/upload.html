@@ -14,6 +14,8 @@
     .batch-tool-btn { font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
     .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; }
     .historical-badge { font-size: 0.68rem; font-weight: 500; display: block; margin-top: 4px; color: #64748b; font-family: 'Inter', sans-serif; }
+    .polling-pulse { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
 </style>
 {% endblock %}
 
@@ -410,7 +412,6 @@
                 resultsWrapper.classList.remove('d-none');
                 loteDisplayName.textContent = `Operación Activa Lote #${analysisId}`;
 
-                // --- INICIO DEL CAMBIO: PROCESAMIENTO SECUENCIAL CON FOR...OF ---
                 for (const fileInfo of filesToProcess) {
                     const isSub = typeMapping[fileInfo.name] || false;
                     progressStatusText.textContent = `Analizando: ${fileInfo.name}`;
@@ -428,8 +429,11 @@
                             })
                         });
 
-                        // Lanzar error si el servidor devuelve un 502 (OOM) o similar
+                        // MODIFICACIÓN: Interceptar el Error 502/504 de Render
                         if (!singleFileResponse.ok) {
+                            if (singleFileResponse.status === 502 || singleFileResponse.status === 504) {
+                                throw new Error("TIMEOUT_RENDER");
+                            }
                             throw new Error(`Caída del servidor (HTTP ${singleFileResponse.status}) al procesar este componente.`);
                         }
                         
@@ -524,19 +528,22 @@
                         }
 
                     } catch (fileError) {
-                        // Si ocurre un error, avanzamos la barra de todas formas para no trabar el ciclo
                         completedCount++;
                         const percentage = Math.round((completedCount / totalFiles) * 100);
                         progressBarFill.style.width = `${percentage}%`;
                         progressPercentage.textContent = `${percentage}%`;
                         
-                        console.error(`Error procesando ${fileInfo.name}:`, fileError);
-                        renderRowAnalysisError(fileInfo.name, fileError.message);
+                        // MODIFICACIÓN: Decidir qué tarjeta renderizar basada en el error
+                        if (fileError.message === "TIMEOUT_RENDER") {
+                            renderRowTimeoutProcessing(fileInfo.name, analysisId);
+                        } else {
+                            console.error(`Error procesando ${fileInfo.name}:`, fileError);
+                            renderRowAnalysisError(fileInfo.name, fileError.message);
+                        }
                     }
                 }
-                // --- FIN DEL CAMBIO SECUENCIAL ---
 
-                // Una vez terminado el bucle, finalizamos el análisis general
+                // Finalizar el análisis en la BD
                 const finalStatusRes = await fetch('/analisis/rfq/finalize-analysis/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -545,12 +552,13 @@
                 const finalStatusData = await finalStatusRes.json();
 
                 if (finalStatusData.final_status === 'failed') {
-                    progressStatusText.textContent = "El lote finalizó, pero no se recuperaron datos válidos.";
-                    progressBarFill.className = "progress-bar bg-danger rounded-pill";
+                    progressStatusText.textContent = "El lote finalizó, pero asegúrate de checar el Historial por procesos en 2do plano.";
+                    progressBarFill.className = "progress-bar bg-warning rounded-pill";
                 } else {
-                    progressStatusText.textContent = "¡Análisis e inyección completa de datos!";
+                    progressStatusText.textContent = "¡Análisis completo! Revisa tu información.";
                     progressBarFill.className = "progress-bar bg-success rounded-pill";
                 }
+                
                 if(finalStatusData.suggested_name) { loteDisplayName.textContent = finalStatusData.suggested_name; }
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
@@ -560,8 +568,7 @@
             submitBtn.disabled = false;
             submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
             
-            // Error visual final en la UI
-            progressStatusText.textContent = "Error: El servidor agotó su memoria o tiempo de respuesta.";
+            progressStatusText.textContent = "Error General: Intenta recargar la página.";
             progressBarFill.className = "progress-bar bg-danger rounded-pill";
             progressBarFill.style.width = "100%";
         }
@@ -570,7 +577,7 @@
     function renderRowAnalysisError(filename, customErrorMessage) {
         const asyncComponentsTable = document.getElementById('async-components-table-body');
         const rowError = document.createElement('tr');
-        const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles (Resultados Null).";
+        const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles.";
         rowError.innerHTML = `
             <td class="text-center"><i class="bi bi-x-circle-fill text-danger fs-5"></i></td>
             <td><strong class="text-dark d-block small">${filename}</strong></td>
@@ -582,6 +589,57 @@
             <td class="text-end text-muted small pe-3">N/D</td>
         `;
         asyncComponentsTable.appendChild(rowError);
+    }
+
+    // NUEVA FUNCIÓN: Genera la tarjeta amarilla y el botón para hacer Polling (Auto-búsqueda)
+    function renderRowTimeoutProcessing(filename, analysisId) {
+        const asyncComponentsTable = document.getElementById('async-components-table-body');
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="text-center"><i class="bi bi-cloud-arrow-up text-warning fs-3 polling-pulse"></i></td>
+            <td><strong class="text-dark d-block small text-uppercase">${filename}</strong></td>
+            <td>
+                <div class="alert alert-warning mb-0 p-3 text-start rounded-3 small" style="border-left: 4px solid #ffc107;">
+                    <strong>Procesamiento en Segundo Plano:</strong> El archivo es extenso. La conexión de la interfaz caducó por reglas del servidor, pero <strong>la IA sigue trabajando en el fondo</strong>.<br>
+                    <button class="btn btn-sm btn-dark mt-3 fw-bold" onclick="startPollingForResults(${analysisId}, this)">
+                        <i class="bi bi-radar"></i> Rastrear y Buscar Resultados en BD
+                    </button>
+                </div>
+            </td>
+            <td class="text-end text-muted small pe-3">Extrayendo...</td>
+        `;
+        asyncComponentsTable.appendChild(row);
+    }
+
+    // NUEVA FUNCIÓN: Pregunta a la BD cada 10 segundos si el análisis ya se guardó
+    window.startPollingForResults = function(analysisId, buttonElement) {
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Rastreando Base de Datos...';
+        buttonElement.disabled = true;
+
+        let attempts = 0;
+        const pollInterval = setInterval(async () => {
+            attempts++;
+            try {
+                // Hacemos un fetch a la misma página usando el ID del historial
+                const response = await fetch(`?history_id=${analysisId}`);
+                const htmlText = await response.text();
+                
+                // Si la respuesta HTML incluye la insignia verde de que sí encontró datos
+                if (htmlText.includes('Datos Recuperados') && !htmlText.includes('No hay análisis registrados todavía')) {
+                    clearInterval(pollInterval);
+                    // Los datos ya están listos, recargamos la página para mostrárselos al usuario
+                    window.location.href = `?history_id=${analysisId}`; 
+                } else if (attempts >= 15) { 
+                    // Si pasaron 2.5 minutos y nada (15 intentos x 10s), detenemos la búsqueda
+                    clearInterval(pollInterval);
+                    buttonElement.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Buscar Manualmente';
+                    buttonElement.disabled = false;
+                    alert("El escáner 3D/PDF de este componente aún no termina o falló internamente. Por favor, revisa el Historial de Lotes más tarde.");
+                }
+            } catch (e) {
+                console.error("Error en polling de rastreo:", e);
+            }
+        }, 10000); // Intenta cada 10 segundos
     }
 
     document.getElementById('catalogSearchInput').addEventListener('keyup', function(e) {
