@@ -10,13 +10,8 @@ from django.views.decorators.csrf import csrf_exempt
 from .models import Material, DrawingAnalysis, DrawingDetectedMaterial, PartComponent
 from .forms import DrawingUploadForm
 
-#from RFQ.services.parsers.pdf_parser import (
-#    extract_text_from_pdf, extract_volume, extract_weight, extract_color)
 from RFQ.services.ai.structured_extractor import extract_rfq_data
 from RFQ.services.materials.embedding_matcher import match_material
-
-#from RFQ.services.cad.step_parser import analyze_step
-#from RFQ.services.cad.stl_parser import analyze_stl
 from django.db.models import Q
 
 def upload_and_process_rfq(request):
@@ -67,7 +62,6 @@ def upload_and_process_rfq(request):
         if not primary_pdf and all_saved_files:
             primary_pdf = all_saved_files[0]['name']
 
-       
         analysis = DrawingAnalysis.objects.create(
             uploaded_file=f"tmp/{primary_pdf}",
             raw_text="",
@@ -170,123 +164,144 @@ def process_single_file_async(request):
                 parts_list = raw_data.get('parts', raw_data.get('part_numbers', [raw_data] if 'part_number' in raw_data else []))
 
             for part in parts_list:
-                part_num = part.get('part_number') or part.get('part_number_base')
-                part_desc = part.get('name') or part.get('description') or ''
-                clean_part_key = str(part_num).strip().upper() if part_num else ""
-                
-                material_data = part.get('materials', [{}])[0] if part.get('materials') else part.get('material', {})
-                if not isinstance(material_data, dict):
-                    material_data = {"name": str(material_data)}
+                try:
+                    part_num = part.get('part_number') or part.get('part_number_base')
+                    part_desc = part.get('name') or part.get('description') or ''
+                    clean_part_key = str(part_num).strip().upper() if part_num else ""
                     
-                commercial_name_ia = material_data.get('material_name') or material_data.get('name') or ''
-                resin_family_ia = material_data.get('resin_family') or material_data.get('family') or ''
-                color_ia = material_data.get('color') or ''
-                supplier_ia = material_data.get('supplier') or 'No especificado'
-                
-                alt_material_data = part.get('alternative_material_suggestions', [{}])[0] if part.get('alternative_material_suggestions') else {}
-                alt_resin_name = alt_material_data.get('name', '')
-                if not alt_resin_name or alt_resin_name.upper() == 'NULL':
-                    alt_resin_name = 'Ninguna registrada'
+                    materials_list = part.get('materials')
+                    if materials_list and isinstance(materials_list, list) and len(materials_list) > 0:
+                        material_data = materials_list[0]
+                    else:
+                        material_data = part.get('material', {})
 
-                matched_material_db = None
-                is_matched_via_alternate = False
-                
-                if isinstance(commercial_name_ia, str) and commercial_name_ia.strip():
-                    match_result = match_material(commercial_name_ia)
-                    if match_result and match_result["confidence"] >= 45:
-                        matched_material_db = match_result["material"]
-                
-                if not matched_material_db and alt_resin_name and alt_resin_name != 'Ninguna registrada':
-                    alt_match_result = match_material(alt_resin_name)
-                    if alt_match_result and alt_match_result["confidence"] >= 45:
-                        matched_material_db = alt_match_result["material"]
-                        is_matched_via_alternate = True
-
-                volume_val = part.get('volume_cm3') or part.get('volume')
-                
-                if not volume_val and clean_part_key:
-                    threed_geom = DrawingDetectedMaterial.objects.filter(
-                        Q(analysis=analysis) & 
-                        Q(bom_reference__icontains="Geometría 3D Indexada") & 
-                        Q(bom_reference__icontains=clean_part_key)
-                    ).first()
-                    if threed_geom:
-                        volume_val = threed_geom.component_volumen
-
-                if not volume_val:
-                    volume_val = local_volume
+                    if not isinstance(material_data, dict):
+                        material_data = {"name": str(material_data)}
                         
-                weight_val = part.get('weight_grams') or part.get('weight') or local_weight
-                data_source_flag = "Extraído de Plano PDF"
+                    commercial_name_ia = material_data.get('material_name') or material_data.get('name') or ''
+                    resin_family_ia = material_data.get('resin_family') or material_data.get('family') or ''
+                    color_ia = material_data.get('color') or ''
+                    supplier_ia = material_data.get('supplier') or 'No especificado'
+                    
+                    alt_materials_list = part.get('alternative_material_suggestions')
+                    if alt_materials_list and isinstance(alt_materials_list, list) and len(alt_materials_list) > 0:
+                        alt_material_data = alt_materials_list[0]
+                    else:
+                        alt_material_data = {}
+                        
+                    alt_resin_name = alt_material_data.get('name', '')
+                    if not alt_resin_name or str(alt_resin_name).upper() == 'NULL':
+                        alt_resin_name = 'Ninguna registrada'
 
-                if not weight_val and local_weight:
-                    weight_val = local_weight
-                    data_source_flag = "Extraído vía Regex PDF (Masse/Weight)"
+                    matched_material_db = None
+                    is_matched_via_alternate = False
+                    
+                    commercial_name_ia_str = str(commercial_name_ia) if commercial_name_ia else ""
+                    if commercial_name_ia_str.strip():
+                        match_result = match_material(commercial_name_ia_str)
+                        if match_result and match_result["confidence"] >= 45:
+                            matched_material_db = match_result["material"]
+                    
+                    if not matched_material_db and alt_resin_name and alt_resin_name != 'Ninguna registrada':
+                        alt_match_result = match_material(str(alt_resin_name))
+                        if alt_match_result and alt_match_result["confidence"] >= 45:
+                            matched_material_db = alt_match_result["material"]
+                            is_matched_via_alternate = True
 
-                if volume_val and not weight_val:
-                    density = matched_material_db.density if matched_material_db else 1.05
-                    try:
-                        weight_val = float(volume_val) * float(density)
-                        data_source_flag = f"Peso Estimado ({volume_val} cm³ x {density} g/cm³)"
-                    except:
-                        weight_val = None
+                    volume_val = part.get('volume_cm3') or part.get('volume')
+                    
+                    if not volume_val and clean_part_key:
+                        threed_geom = DrawingDetectedMaterial.objects.filter(
+                            Q(analysis=analysis) & 
+                            Q(bom_reference__icontains="Geometría 3D Indexada") & 
+                            Q(bom_reference__icontains=clean_part_key)
+                        ).first()
+                        if threed_geom:
+                            volume_val = threed_geom.component_volumen
 
-                secondary_components = part.get('secondary_embedded_components', [])
-                secondary_text_list = []
-                if secondary_components and weight_val:
-                    for sub_item in secondary_components:
-                        s_name = sub_item.get('component_name', '')
-                        m_type = sub_item.get('material_type', '')
-                        qty = sub_item.get('quantity', 1) or 1
-                        added_weight = (2.5 * qty) if m_type == 'METAL' else (0.5 * qty)
-                        weight_val = float(weight_val) + added_weight
-                        secondary_text_list.append(f"{qty}x {s_name}")
-                        data_source_flag = "Peso Compuesto (Resina + Insertos)"
+                    if not volume_val:
+                        volume_val = local_volume
+                            
+                    weight_val = part.get('weight_grams') or part.get('weight') or local_weight
+                    data_source_flag = "Extraído de Plano PDF"
 
-                ref_secundarios = f" | Lleva: {', '.join(secondary_text_list)}" if secondary_text_list else ""
+                    if not weight_val and local_weight:
+                        weight_val = local_weight
+                        data_source_flag = "Extraído vía Regex PDF (Masse/Weight)"
 
-                db_component = DrawingDetectedMaterial.objects.create(
-                    analysis=analysis,
-                    part_number=part_num,
-                    raw_material_text=commercial_name_ia if commercial_name_ia else part_desc,
-                    detected_material=matched_material_db,
-                    detected_family=resin_family_ia if resin_family_ia else "N/D",
-                    detected_color=color_ia if color_ia else "N/D",
-                    component_weight=round(float(weight_val), 2) if weight_val else None,
-                    component_volumen=round(float(volume_val), 2) if volume_val else None,
-                    bom_reference=f"{part_desc}{ref_secundarios} | [Alt: {alt_resin_name}] | [{data_source_flag}] | Origen: {file_name}"
-                )
+                    if volume_val and not weight_val:
+                        density = matched_material_db.density if matched_material_db else 1.05
+                        try:
+                            weight_val = float(volume_val) * float(density)
+                            data_source_flag = f"Peso Estimado ({volume_val} cm³ x {density} g/cm³)"
+                        except:
+                            weight_val = None
 
-                if part_num:
-                    PartComponent.objects.create(
-                        parent=analysis,
-                        child_part_number=part_num,
-                        estimated_weight=weight_val if weight_val else 0,
-                        quantity=part.get('quantity', 1)
+                    secondary_components = part.get('secondary_embedded_components', [])
+                    secondary_text_list = []
+                    if secondary_components and isinstance(secondary_components, list) and weight_val:
+                        for sub_item in secondary_components:
+                            if isinstance(sub_item, dict):
+                                s_name = sub_item.get('component_name', '')
+                                m_type = sub_item.get('material_type', '')
+                                qty = sub_item.get('quantity', 1) or 1
+                                added_weight = (2.5 * qty) if m_type == 'METAL' else (0.5 * qty)
+                                weight_val = float(weight_val) + added_weight
+                                secondary_text_list.append(f"{qty}x {s_name}")
+                                data_source_flag = "Peso Compuesto (Resina + Insertos)"
+
+                    ref_secundarios = f" | Lleva: {', '.join(secondary_text_list)}" if secondary_text_list else ""
+
+                    try: weight_float = round(float(weight_val), 2) if weight_val else None
+                    except: weight_float = None
+                    
+                    try: volume_float = round(float(volume_val), 2) if volume_val else None
+                    except: volume_float = None
+
+                    db_component = DrawingDetectedMaterial.objects.create(
+                        analysis=analysis,
+                        part_number=part_num,
+                        raw_material_text=commercial_name_ia if commercial_name_ia else part_desc,
+                        detected_material=matched_material_db,
+                        detected_family=resin_family_ia if resin_family_ia else "N/D",
+                        detected_color=color_ia if color_ia else "N/D",
+                        component_weight=weight_float,
+                        component_volumen=volume_float,
+                        bom_reference=f"{part_desc}{ref_secundarios} | [Alt: {alt_resin_name}] | [{data_source_flag}] | Origen: {file_name}"
                     )
 
-                # CÁLCULO DUAL DE PESO EN LIBRAS (1 gramo = 0.00220462 libras)
-                weight_lbs = round(float(weight_val) * 0.00220462, 4) if weight_val else None
+                    if part_num:
+                        PartComponent.objects.create(
+                            parent=analysis,
+                            child_part_number=part_num,
+                            estimated_weight=weight_float if weight_float else 0,
+                            quantity=part.get('quantity', 1) or 1
+                        )
 
-                parts_found_payload.append({
-                    'part_number': part_num or "Insumo / Adicional",
-                    'description': part_desc,
-                    'bom_reference': db_component.bom_reference,
-                    'alternative_resin': alt_resin_name,
-                    'data_source': data_source_flag,
-                    'detected_material': matched_material_db.commercial_name if matched_material_db else None,
-                    'material_code': matched_material_db.material_code if matched_material_db else None,
-                    'raw_material_text': commercial_name_ia if commercial_name_ia else "No especificado",
-                    'detected_family': db_component.detected_family,
-                    'detected_color': db_component.detected_color,
-                    'component_weight': db_component.component_weight,
-                    'component_weight_lbs': weight_lbs, 
-                    'component_volumen': db_component.component_volumen,
-                    'color_completo': color_ia,
-                    'is_matched_via_alternate': is_matched_via_alternate,
-                    'secondary_elements': secondary_text_list,
-                    'sugerencias': []
-                })
+                    weight_lbs = round(weight_float * 0.00220462, 4) if weight_float else None
+
+                    parts_found_payload.append({
+                        'part_number': part_num or "Insumo / Adicional",
+                        'description': part_desc,
+                        'bom_reference': db_component.bom_reference,
+                        'alternative_resin': alt_resin_name,
+                        'data_source': data_source_flag,
+                        'detected_material': matched_material_db.commercial_name if matched_material_db else None,
+                        'material_code': matched_material_db.material_code if matched_material_db else None,
+                        'raw_material_text': commercial_name_ia if commercial_name_ia else "No especificado",
+                        'detected_family': db_component.detected_family,
+                        'detected_color': db_component.detected_color,
+                        'component_weight': db_component.component_weight,
+                        'component_weight_lbs': weight_lbs, 
+                        'component_volumen': db_component.component_volumen,
+                        'color_completo': color_ia,
+                        'is_matched_via_alternate': is_matched_via_alternate,
+                        'secondary_elements': secondary_text_list,
+                        'sugerencias': []
+                    })
+                except Exception as inner_e:
+                    print(f"[ERROR] Fallo al procesar componente individual: {str(inner_e)}")
+                    continue
 
             return JsonResponse({
                 'success': True,
@@ -297,7 +312,9 @@ def process_single_file_async(request):
             })
     
     except Exception as general_err:
+        print(f"[ERROR CRÍTICO] process_single_file_async falló: {str(general_err)}")
         return JsonResponse({'success': False, 'error': str(general_err)}, status=500)
+
 @csrf_exempt
 def finalize_analysis_status(request):
     """
