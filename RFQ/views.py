@@ -1,7 +1,6 @@
 import json
 import re
 import os
-import concurrent.futures  # NUEVA LIBRERÍA IMPORTADA
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.core.files.storage import FileSystemStorage
@@ -85,7 +84,9 @@ def upload_and_process_rfq(request):
 @csrf_exempt
 def process_single_file_async(request):
     """
-    ENDPOINT ASÍNCRONO BLINDADO
+    ENDPOINT ASÍNCRONO BLINDADO: Procesa planos individuales cruzando volúmenes 3D
+    específicos por cada número de parte para evitar la duplicación de pesos teóricos.
+    Soporta metadata dual de pesos (gramos y libras) y vinculación por árbol de ensamble.
     """
     if request.method != 'POST':
         return JsonResponse({'error': 'Método no permitido'}, status=405)
@@ -140,6 +141,7 @@ def process_single_file_async(request):
                 analysis.estimated_volume = local_volume
             if local_weight and not analysis.estimated_weight:
                 analysis.estimated_weight = local_weight
+            print(f"[DEBUG] Texto extraído ({len(raw_text)} chars): {raw_text[:300]}")
 
             analysis.save()
             
@@ -148,6 +150,7 @@ def process_single_file_async(request):
                 raw_json = gemini_result.get('raw_response', '{}') if 'raw_response' in gemini_result else json.dumps(gemini_result)
                 clean_json = re.sub(r'^```json\s*|```$', '', raw_json, flags=re.MULTILINE).strip()
                 raw_data = json.loads(clean_json)
+                print(f"[DEBUG] raw_data tipo: {type(raw_data)}, contenido: {str(raw_data)[:200]}")
             except Exception:
                 raw_data = {}
 
@@ -178,6 +181,7 @@ def process_single_file_async(request):
                     commercial_name_ia = material_data.get('material_name') or material_data.get('name') or ''
                     resin_family_ia = material_data.get('resin_family') or material_data.get('family') or ''
                     color_ia = material_data.get('color') or ''
+                    supplier_ia = material_data.get('supplier') or 'No especificado'
                     
                     alt_materials_list = part.get('alternative_material_suggestions')
                     if alt_materials_list and isinstance(alt_materials_list, list) and len(alt_materials_list) > 0:
@@ -193,40 +197,16 @@ def process_single_file_async(request):
                     is_matched_via_alternate = False
                     
                     commercial_name_ia_str = str(commercial_name_ia) if commercial_name_ia else ""
-                    
-                    # -------------------------------------------------------------------------
-                    # ESCUDO ANTI-CONGELAMIENTO PARA API DE EMBEDDINGS (TIMEOUT DE 5 SEGUNDOS)
-                    # -------------------------------------------------------------------------
                     if commercial_name_ia_str.strip():
-                        print(f"[IA] Solicitando embedding para: {commercial_name_ia_str}")
-                        try:
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                                future = executor.submit(match_material, commercial_name_ia_str)
-                                # Le damos máximo 5 segundos a la IA para responder. Si no, cortamos.
-                                match_result = future.result(timeout=5)
-                                
-                            if match_result and match_result.get("confidence", 0) >= 45:
-                                matched_material_db = match_result["material"]
-                        except concurrent.futures.TimeoutError:
-                            print(f"[ERROR TIMEOUT] El embedding de '{commercial_name_ia_str}' se congeló. Saltando.")
-                        except Exception as e:
-                            print(f"[ERROR API] Fallo al conectar con embeddings: {e}")
+                        match_result = match_material(commercial_name_ia_str)
+                        if match_result and match_result["confidence"] >= 45:
+                            matched_material_db = match_result["material"]
                     
                     if not matched_material_db and alt_resin_name and alt_resin_name != 'Ninguna registrada':
-                        print(f"[IA] Solicitando embedding alternativo para: {alt_resin_name}")
-                        try:
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                                future_alt = executor.submit(match_material, str(alt_resin_name))
-                                alt_match_result = future_alt.result(timeout=5)
-                                
-                            if alt_match_result and alt_match_result.get("confidence", 0) >= 45:
-                                matched_material_db = alt_match_result["material"]
-                                is_matched_via_alternate = True
-                        except concurrent.futures.TimeoutError:
-                            print(f"[ERROR TIMEOUT] El embedding alterno se congeló. Saltando.")
-                        except Exception as e:
-                            print(f"[ERROR API] Fallo al conectar con embeddings: {e}")
-                    # -------------------------------------------------------------------------
+                        alt_match_result = match_material(str(alt_resin_name))
+                        if alt_match_result and alt_match_result["confidence"] >= 45:
+                            matched_material_db = alt_match_result["material"]
+                            is_matched_via_alternate = True
 
                     volume_val = part.get('volume_cm3') or part.get('volume')
                     
@@ -338,7 +318,8 @@ def process_single_file_async(request):
 @csrf_exempt
 def finalize_analysis_status(request):
     """
-    Consolida el estado final de la auditoría.
+    Consolida el estado final de la auditoría. Configura la nomenclatura específica
+    multi-maestro e introduce el campo descriptivo final de los números de parte.
     """
     if request.method != 'POST':
         return JsonResponse({'error': 'Método inválido'}, status=400)
