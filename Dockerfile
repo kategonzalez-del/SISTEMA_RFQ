@@ -31,4 +31,5 @@ COPY . /app/
 
 # Comando por defecto para arrancar Django con Gunicorn
 EXPOSE 8000
-CMD ["gunicorn", "config_rfq.wsgi:application", "--bind", "0.0.0.0:8000"]
+# Por esta nueva versión con la bandera --timeout:
+CMD ["gunicorn", "config_rfq.wsgi:application", "--bind", "0.0.0.0:8000", "--timeout", "300"]
