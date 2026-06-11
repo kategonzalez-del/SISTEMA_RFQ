@@ -1,7 +1,15 @@
 import fitz
 import io
 from PIL import Image
-import pytesseract
+import fitz
+import io
+from PIL import Image
+from paddleocr import PaddleOCR
+
+OCR_ENGINE = PaddleOCR(
+    use_angle_cls=True,
+    lang='en'
+)
 
 def extract_text_with_ocr(pdf_path):
     doc = fitz.open(pdf_path)
@@ -9,12 +17,38 @@ def extract_text_with_ocr(pdf_path):
 
     for page in doc:
         pix = page.get_pixmap(dpi=300)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        
+
         try:
-            text = pytesseract.image_to_string(img, lang='eng')
-            full_text.append(text)
+            img = Image.frombytes(
+                "RGB",
+                [pix.width, pix.height],
+                pix.samples
+            )
+
+            img_byte_arr = io.BytesIO()
+
+            img.save(
+                img_byte_arr,
+                format='PNG'
+            )
+
+            img_bytes = img_byte_arr.getvalue()
+
+            result = OCR_ENGINE.ocr(img_bytes)
+
+            page_text = []
+
+            if result:
+                for line in result:
+                    if line:
+                        for item in line:
+                            page_text.append(item[1][0])
+
+            full_text.append("\n".join(page_text))
+
+            img_byte_arr.close()
+
         except Exception as e:
-            print(f"Error OCR página: {str(e)}")
+            print(f"OCR Error: {e}")
 
     return "\n".join(full_text)

@@ -1,4 +1,3 @@
-{% extends 'RFQ/base_rfq.html' %}
 {% load static %}
 {% load i18n %}
 {% load custom_filters %}
@@ -11,9 +10,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{% static 'css/RFQ/rfq.css' %}">
 <style>
+    
     .batch-tool-btn { font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
     .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; }
     .historical-badge { font-size: 0.68rem; font-weight: 500; display: block; margin-top: 4px; color: #64748b; font-family: 'Inter', sans-serif; }
+
 </style>
 {% endblock %}
 
@@ -370,25 +371,22 @@
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (virtualStorage.files.length === 0) { alert("Carga al menos un archivo técnico."); return; }
-
+    
         const submitBtn = document.getElementById('submit-btn');
         const progressContainer = document.getElementById('progress-container');
         const progressBarFill = document.getElementById('progress-bar-fill');
         const progressStatusText = document.getElementById('progress-status-text');
         const progressPercentage = document.getElementById('progress-percentage');
-        
-        const resultsWrapper = document.getElementById('results-wrapper-block');
-        const asyncComponentsTable = document.getElementById('async-components-table-body');
-        const asyncBadgesContainer = document.getElementById('async-file-badges-container');
-        const loteDisplayName = document.getElementById('lote-display-name');
-
+    
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Consolidando lote...`;
+        submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Enviando al servidor...`;
         progressContainer.classList.remove('d-none');
         
-        asyncComponentsTable.innerHTML = '';
-        asyncBadgesContainer.innerHTML = '';
-
+        // Simular un progreso inicial para que el usuario vea actividad
+        progressBarFill.style.width = `10%`;
+        progressPercentage.textContent = `10%`;
+        progressStatusText.textContent = "Subiendo archivos e iniciando IA...";
+    
         const initialFormData = new FormData();
         Array.from(virtualStorage.files).forEach(f => initialFormData.append('rfq_file', f));
         
@@ -396,174 +394,57 @@
         Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
         initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
         initialFormData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
-
+    
         try {
+            // 1. Enviamos los archivos. El backend los guarda y dispara Celery casi instantáneamente.
             const initResponse = await fetch('', { method: 'POST', body: initialFormData });
             const initData = await initResponse.json();
             
             if (initData.status === 'initiated') {
                 const analysisId = initData.analysis_id;
-                const filesToProcess = initData.files;
-                const totalFiles = filesToProcess.length;
-                let completedCount = 0;
-
-                resultsWrapper.classList.remove('d-none');
-                loteDisplayName.textContent = `Operación Activa Lote #${analysisId}`;
-
-                // --- INICIO DEL CAMBIO: PROCESAMIENTO SECUENCIAL CON FOR...OF ---
-                for (const fileInfo of filesToProcess) {
-                    const isSub = typeMapping[fileInfo.name] || false;
-                    progressStatusText.textContent = `Analizando: ${fileInfo.name}`;
-                    
+                
+                progressBarFill.style.width = `50%`;
+                progressPercentage.textContent = `50%`;
+                progressStatusText.textContent = "Procesando geometría 3D y leyendo planos (Esto puede tardar unos minutos)...";
+                progressBarFill.classList.add('progress-bar-animated', 'progress-bar-striped');
+    
+                // 2. INICIAMOS EL POLLING (Preguntamos cada 3 segundos)
+                const checkInterval = setInterval(async () => {
                     try {
-                        const singleFileResponse = await fetch('/analisis/rfq/process-file-async/', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                analysis_id: analysisId,
-                                file_name: fileInfo.name,
-                                file_path: fileInfo.path,
-                                ext: fileInfo.ext,
-                                is_subcomponent: isSub
-                            })
-                        });
-
-                        // Lanzar error si el servidor devuelve un 502 (OOM) o similar
-                        if (!singleFileResponse.ok) {
-                            throw new Error(`Caída del servidor (HTTP ${singleFileResponse.status}) al procesar este componente.`);
+                        // Consultamos un nuevo endpoint que crearemos en Django
+                        const statusRes = await fetch(`/api/rfq/check-status/?analysis_id=${analysisId}`);
+                        const statusData = await statusRes.json();
+    
+                        if (statusData.status === 'completed') {
+                            clearInterval(checkInterval);
+                            progressBarFill.style.width = `100%`;
+                            progressPercentage.textContent = `100%`;
+                            progressStatusText.textContent = "¡Análisis completo! Cargando resultados...";
+                            progressBarFill.classList.replace('bg-primary', 'bg-success');
+                            
+                            // 3. Recargamos la vista usando tu propio sistema de historial
+                            setTimeout(() => {
+                                window.location.href = `?history_id=${analysisId}`;
+                            }, 1000);
+    
+                        } else if (statusData.status === 'failed') {
+                            clearInterval(checkInterval);
+                            progressBarFill.style.width = `100%`;
+                            progressStatusText.textContent = "Error al procesar los archivos en el servidor.";
+                            progressBarFill.classList.replace('bg-primary', 'bg-danger');
+                            submitBtn.disabled = false;
+                            submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Reintentar Análisis`;
                         }
-                        
-                        const resData = await singleFileResponse.json();
-
-                        completedCount++;
-                        const percentage = Math.round((completedCount / totalFiles) * 100);
-                        progressBarFill.style.width = `${percentage}%`;
-                        progressPercentage.textContent = `${percentage}%`;
-
-                        if (resData.success) {
-                            const badgeSpan = document.createElement('span');
-                            badgeSpan.className = 'badge bg-light border text-dark px-2.5 py-1.5 rounded-2 small shadow-sm pulse-loading';
-                            badgeSpan.innerHTML = `<i class="bi bi-file-earmark-check text-success me-1"></i> ${resData.classification}`;
-                            asyncBadgesContainer.appendChild(badgeSpan);
-
-                            if (resData.type === '3d') {
-                                const row3d = document.createElement('tr');
-                                row3d.innerHTML = `
-                                    <td class="fw-bold text-info"><i class="bi bi-cube-solid me-1"></i> Sólido CAD</td>
-                                    <td>
-                                        <strong class="text-dark d-block small text-uppercase">${resData.file_name}</strong>
-                                        <small class="text-muted d-block" style="font-size: 0.72rem;">Estructura matemática cargada en memoria.</small>
-                                    </td>
-                                    <td>
-                                        <div class="spec-3d-box shadow-sm">
-                                            <span class="badge bg-info bg-opacity-10 text-info border border-info rounded-2 px-2 py-0.5 small fw-bold mb-1">Geometría Indexada</span>
-                                            <p class="small text-muted mb-0" style="font-size: 0.75rem;">Volumen CAD ligado para resolver densidades plásticas del lote.</p>
-                                        </div>
-                                    </td>
-                                    <td class="text-end pe-3">
-                                        <div class="dual-weight-box text-start">
-                                            <div class="mb-1 text-muted fw-bold"><i class="bi bi-box-seam me-1"></i> Peso: N/D</div>
-                                            <div class="fw-bold text-info"><i class="bi bi-moisture me-1"></i> Vol: <span>${resData.volume_cm3} cm³</span></div>
-                                        </div>
-                                    </td>
-                                `;
-                                asyncComponentsTable.appendChild(row3d);
-                            } 
-                            else if (resData.parts && resData.parts.length > 0) {
-                                resData.parts.forEach(part => {
-                                    const row = document.createElement('tr');
-                                    
-                                    let insertosHtml = '';
-                                    if (part.secondary_elements && part.secondary_elements.length > 0) {
-                                        insertosHtml = `
-                                            <div class="mt-2 flex-wrap gap-1">
-                                                ${part.secondary_elements.map(elem => `<span class="badge bg-dark bg-opacity-10 text-dark border border-dark rounded-2 p-1 small" style="font-size: 0.7rem;"><i class="bi bi-paperclip"></i> ${elem}</span>`).join('')}
-                                            </div>`;
-                                    }
-            
-                                    let materialHeaderHtml = part.detected_material ? `
-                                        <div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold"><i class="bi bi-shield-check me-1"></i> Match Catálogo: ${part.material_code}</span></div>
-                                        <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;"><i class="bi bi-file-earmark-text me-1"></i> ${part.raw_material_text}</h6>
-                                        <div class="text-muted small mb-1">Validado en Catálogo: <span class="text-secondary fw-medium">${part.detected_material}</span></div>
-                                    ` : `
-                                        <div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold"><i class="bi bi-shield-exclamation me-1"></i> No Registrado en Catálogo</span></div>
-                                        <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Requerimiento Plano: ${part.raw_material_text}</h6>`;
-            
-                                    row.innerHTML = `
-                                        <td class="fw-bold text-primary fs-6">${part.part_number}</td>
-                                        <td>
-                                            <span class="d-block text-dark fw-bold mb-1">${part.description}</span>
-                                            <small class="text-muted d-block" style="font-size: 0.72rem; line-height: 1.3;"><i class="bi bi-info-circle me-1"></i> ${part.bom_reference}</small>
-                                            ${insertosHtml}
-                                            <div class="mt-2">
-                                                <span class="badge-indicator bg-secondary bg-opacity-10 text-secondary border border-secondary"><i class="bi bi-cpu me-1"></i> ${part.data_source}</span>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div class="p-3 card-audit shadow-sm bg-white">
-                                                ${materialHeaderHtml}
-                                                <div class="text-muted small mb-1.5" style="font-size: 0.78rem;"><i class="bi bi-arrow-left-right text-warning me-1"></i> Resina Alterna en Plano: <span class="fw-bold text-dark">${part.alternative_resin}</span></div>
-                                                <div class="p-2 bg-light rounded text-secondary mt-1" style="font-size: 0.75rem; border-left: 3px solid #64748b;"><strong>Ficha Técnica:</strong> Familia: ${part.detected_family} | Color/Pigm: ${part.color_completo || part.detected_color} | Proveedor: ${part.detected_supplier}</div>
-                                            </div>
-                                        </td>
-                                        <td class="text-end pe-3">
-                                            <div class="dual-weight-box text-start">
-                                                <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> ${part.component_weight ? part.component_weight + ' g' : 'N/D'}</div>
-                                                <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> ${part.component_weight_lbs ? part.component_weight_lbs + ' lbs' : 'N/D'}</div>
-                                                <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture text-info me-1"></i> ${part.component_volumen ? part.component_volumen + ' cm³' : 'N/D'}</div>
-                                            </div>
-                                        </td>
-                                    `;
-                                    asyncComponentsTable.appendChild(row);
-                                });
-                            } else { 
-                                renderRowAnalysisError(fileInfo.name, null); 
-                            }
-                        } else { 
-                            renderRowAnalysisError(fileInfo.name, resData.error); 
-                        }
-
-                    } catch (fileError) {
-                        // Si ocurre un error, avanzamos la barra de todas formas para no trabar el ciclo
-                        completedCount++;
-                        const percentage = Math.round((completedCount / totalFiles) * 100);
-                        progressBarFill.style.width = `${percentage}%`;
-                        progressPercentage.textContent = `${percentage}%`;
-                        
-                        console.error(`Error procesando ${fileInfo.name}:`, fileError);
-                        renderRowAnalysisError(fileInfo.name, fileError.message);
+                    } catch (pollError) {
+                        console.warn("Fallo temporal en la conexión, reintentando en 3s...", pollError);
                     }
-                }
-                // --- FIN DEL CAMBIO SECUENCIAL ---
-
-                // Una vez terminado el bucle, finalizamos el análisis general
-                const finalStatusRes = await fetch('/analisis/rfq/finalize-analysis/', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ analysis_id: analysisId })
-                });
-                const finalStatusData = await finalStatusRes.json();
-
-                if (finalStatusData.final_status === 'failed') {
-                    progressStatusText.textContent = "El lote finalizó, pero no se recuperaron datos válidos.";
-                    progressBarFill.className = "progress-bar bg-danger rounded-pill";
-                } else {
-                    progressStatusText.textContent = "¡Análisis e inyección completa de datos!";
-                    progressBarFill.className = "progress-bar bg-success rounded-pill";
-                }
-                if(finalStatusData.suggested_name) { loteDisplayName.textContent = finalStatusData.suggested_name; }
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
+                }, 3000); // 3000 ms = 3 segundos
             }
         } catch (err) {
             console.error(err);
             submitBtn.disabled = false;
             submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
-            
-            // Error visual final en la UI
-            progressStatusText.textContent = "Error: El servidor agotó su memoria o tiempo de respuesta.";
-            progressBarFill.className = "progress-bar bg-danger rounded-pill";
-            progressBarFill.style.width = "100%";
+            progressStatusText.textContent = "Error de red al intentar subir los archivos.";
         }
     });
 

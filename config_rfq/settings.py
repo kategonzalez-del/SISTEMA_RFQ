@@ -10,9 +10,13 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
-from pathlib import Path
 import os
-import dj_database_url
+from pathlib import Path
+from django.utils.translation import gettext_lazy as _
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+GOOGLE_CREDENTIALS = os.path.join(BASE_DIR, 'config/rfq-automation-495519-18ae3cd45c97.json')
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,14 +29,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = 'RENDER'
+DEBUG = True
 
-ALLOWED_HOSTS = []
-RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_EXTERNAL_HOSTNAME:
-    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-
-
+ALLOWED_HOSTS = ["*"]
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.trycloudflare.com",
+]
 # Application definition
 
 INSTALLED_APPS = [
@@ -73,25 +75,56 @@ TEMPLATES = [
     },
 ]
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [BASE_DIR / 'static']
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-
 WSGI_APPLICATION = 'config_rfq.wsgi.application'
 
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default='sqlite:///db.sqlite3',
-        conn_max_age=600
-    )
-}
+# --- DATABASES ---
+import os
+
+# --- BASE DE DATOS EN LA NUBE ---
+# Si Railway inyecta MYSQL_URL (producción), la usa. Si no, usa tu localhost (desarrollo).
+MYSQL_URL = os.getenv('MYSQL_URL')
+
+if MYSQL_URL:
+    # Railway provee las credenciales separadas también, es más seguro mapearlas así:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.getenv('MYSQLDATABASE', 'noticias'),
+            'USER': os.getenv('MYSQLUSER', 'root'),
+            'PASSWORD': os.getenv('MYSQLPASSWORD'),
+            'HOST': os.getenv('MYSQLHOST'),
+            'PORT': os.getenv('MYSQLPORT', '3306'),
+        }
+    }
+else:
+    # Tu configuración local de siempre
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': 'noticias',
+            'USER': 'root',
+            'PASSWORD': '1234sk',
+            'HOST': 'localhost',
+            'PORT': '3307',
+        }
+    }
+
+# --- CONFIGURACIÓN DE CELERY ---
+# En Railway usará REDIS_URL, localmente usará el localhost
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+
+# --- API KEYS SEGURAS ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5")
 
 
 
@@ -128,10 +161,11 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
-
-import os
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -139,4 +173,5 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # gemini API
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_API_KEY = "AIzaSyA7BVi_QiylCMSjKc8wXm2HWzX1YsBB2P8"
+

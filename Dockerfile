@@ -1,17 +1,16 @@
-# Usamos Python 3.10-slim como base (es la versión más estable para PaddlePaddle y CadQuery)
+# Usamos Python 3.10-slim como base
 FROM python:3.10-slim
 
 # Evita que Python escriba archivos .pyc en el disco y asegura que los logs se vean en tiempo real
-ENV PYTHONTONTWRITEBYTECODE=1
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Instalar dependencias del sistema operativo esenciales para tu stack
-# (OpenCV, compilar MySQL, Poppler para PDFs, OpenMP para IA y herramientas de geometría)
+# Instalar dependencias del sistema operativo (Cambiamos libgl1-mesa-glx por libgl1)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     default-libmysqlclient-dev \
     pkg-config \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     poppler-utils \
     tesseract-ocr \
@@ -30,6 +29,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copiar todo el código de tu proyecto al contenedor
 COPY . /app/
 
-# Comando por defecto (Railway lo ignorará porque configuraremos comandos específicos por servicio)
+# Comando por defecto para arrancar Django con Gunicorn
 EXPOSE 8000
 CMD ["gunicorn", "config_rfq.wsgi:application", "--bind", "0.0.0.0:8000"]

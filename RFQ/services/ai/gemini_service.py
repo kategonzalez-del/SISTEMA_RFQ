@@ -1,22 +1,22 @@
-import os
+
 from google import genai
+from django.conf import settings
+
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+MODEL_NAME = "gemini-3.1-flash-lite"
 
 def ask_gemini(prompt):
+    """
+    Invocación corregida al motor Gemini mediante el SDK moderno de Google.
+    Garantiza el mapeo correcto del parámetro requerido 'contents'.
+    """
     try:
-        # 1. Recuperar la llave dinámica desde Render
-        api_key_dinamica = os.environ.get('GEMINI_API_KEY')
-        
-        # 2. Inicializar el "Client" oficial de la nueva API
-        client = genai.Client(api_key=api_key_dinamica)
-        
-        # 3. Llamar a tu modelo específico Flash Lite
         response = client.models.generate_content(
-            model='gemini-3.1-flash-lite',
-            contents=prompt,
+            model=MODEL_NAME,   
+            contents=prompt, 
         )
-        
         return response.text
-        
     except Exception as e:
         print(f"Error crítico en la llamada a Gemini Flash Lite: {str(e)}")
         raise e
