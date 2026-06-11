@@ -51,7 +51,8 @@ class Command(BaseCommand):
         # Movemos pandas aquí adentro para que no cargue al inicio de Django
         import pandas as pd 
         
-        file_path = os.path.join(settings.MEDIA_ROOT, 'materials', 'materials.xlsx')
+        # Cambia la línea por algo así de directo:
+        file_path = os.path.join(settings.BASE_DIR, 'materials.xlsx')
         df = pd.read_excel(file_path, header=1)
         df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
         
