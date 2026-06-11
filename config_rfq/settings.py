@@ -31,10 +31,10 @@ SECRET_KEY = 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["*"]
-CSRF_TRUSTED_ORIGINS = [
-    "https://*.trycloudflare.com",
-]
+ALLOWED_HOSTS = ['sistemarfq-production.up.railway.app', 'localhost', '127.0.0.1']
+
+# O si prefieres abrirlo por completo para asegurar:
+# ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
