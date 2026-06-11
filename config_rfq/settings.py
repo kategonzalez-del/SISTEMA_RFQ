@@ -26,11 +26,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
+# Si está en Railway será False, si estás local será True
+DEBUG = os.getenv('RAILWAY_ENVIRONMENT_NAME') is None
 ALLOWED_HOSTS = ['sistemarfq-production.up.railway.app', 'localhost', '127.0.0.1']
 
 # O si prefieres abrirlo por completo para asegurar:
@@ -82,26 +82,22 @@ WSGI_APPLICATION = 'config_rfq.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 # --- DATABASES ---
-import os
+# --- DATABASES ---
+import dj_database_url
 
-# --- BASE DE DATOS EN LA NUBE ---
-# Si Railway inyecta MYSQL_URL (producción), la usa. Si no, usa tu localhost (desarrollo).
-MYSQL_URL = os.getenv('MYSQL_URL')
+# Intentamos leer la URL de conexión que Railway genera por defecto (MYSQLURL o DATABASE_URL)
+DATABASE_URL = os.getenv('MYSQLURL') or os.getenv('DATABASE_URL')
 
-if MYSQL_URL:
-    # Railway provee las credenciales separadas también, es más seguro mapearlas así:
+if DATABASE_URL:
+    # Si estamos en la nube de Railway, esta librería configura todo sola de forma automática
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.mysql',
-            'NAME': os.getenv('MYSQLDATABASE', 'noticias'),
-            'USER': os.getenv('MYSQLUSER', 'root'),
-            'PASSWORD': os.getenv('MYSQLPASSWORD'),
-            'HOST': os.getenv('MYSQLHOST'),
-            'PORT': os.getenv('MYSQLPORT', '3306'),
-        }
+        'default': dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600
+        )
     }
 else:
-    # Tu configuración local de siempre
+    # Tu configuración local de siempre para cuando trabajas en tu computadora
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
