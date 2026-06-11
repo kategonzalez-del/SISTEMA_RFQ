@@ -19,7 +19,7 @@ from RFQ.services.materials.embedding_matcher import match_material
 from RFQ.services.cad.step_parser import analyze_step
 from RFQ.services.cad.stl_parser import analyze_stl
 from django.db.models import Q
-from tasks import process_file_in_background
+from .tasks import process_file_in_background
 def upload_and_process_rfq(request):
     context = {}
     form = DrawingUploadForm()
