@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from config_rfq.celery import shared_task 
+from celery import shared_task
 from django.db.models import Q
 from .models import DrawingAnalysis, DrawingDetectedMaterial, PartComponent, Material
 
