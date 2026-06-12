@@ -62,7 +62,8 @@ def process_file_in_background(analysis_id, file_name, file_path, ext, is_subcom
                 parts_list = raw_data
             elif isinstance(raw_data, dict):
                 parts_list = raw_data.get('parts', raw_data.get('part_numbers', [raw_data] if 'part_number' in raw_data else []))
-
+                
+            parts_found_payload = []
             for part in parts_list:
                 part_num = part.get('part_number') or part.get('part_number_base')
                 part_desc = part.get('name') or part.get('description') or ''
