@@ -70,7 +70,6 @@ class Command(BaseCommand):
                 if not code or code.upper() == 'NONE':
                     continue
 
-                # Guardamos o actualizamos en la base de datos de Railway
                 obj, created = Material.objects.update_or_create(
                     material_code=code,
                     defaults={
