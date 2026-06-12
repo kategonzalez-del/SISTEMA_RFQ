@@ -397,7 +397,7 @@
     
         try {
             // 1. Enviamos los archivos. El backend los guarda y dispara Celery casi instantáneamente.
-            const initResponse = await fetch('{% url "RFQ:upload" %}', { method: 'POST', body: initialFormData });
+            const initResponse = await fetch('{% url "RFQ:upload_rfq" %}', { method: 'POST', body: initialFormData });
             const initData = await initResponse.json();
             
             if (initData.status === 'initiated') {
