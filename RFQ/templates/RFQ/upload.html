@@ -255,224 +255,243 @@
 </div>
 
 <script>
-    const virtualStorage = new DataTransfer();
-    let fileMetaTypes = [];
-    
-    const zone = document.getElementById('drop-zone');
-    const input = document.getElementById('rfq_file');
-    const block = document.getElementById('file-registry-block');
-    const form = document.getElementById('rfq-hybrid-form');
-
-    // Manejador del candado para evitar doble apertura de archivos
-    zone.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (zone.dataset.isClicking === "true") return; 
-        zone.dataset.isClicking = "true";
-        
-        input.click();
-        
-        setTimeout(() => { zone.dataset.isClicking = "false"; }, 500);
-    });
-    
-    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-    zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('dragover'); appendFiles(e.dataTransfer.files); });
-    
-    // Limpieza de input tras selección
-    input.addEventListener('change', (e) => { 
-        appendFiles(e.target.files); 
-        e.target.value = ''; 
-    });
-
-    function appendFiles(files) {
-        Array.from(files).forEach(file => {
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (["pdf", "step", "stp", "stl"].includes(ext)) {
-                const exists = Array.from(virtualStorage.files).some(f => f.name === file.name && f.size === file.size);
-                if (!exists) {
-                    virtualStorage.items.add(file);
-                    const isHintSub = !file.name.includes('24-4451') || ext !== 'pdf'; 
-                    fileMetaTypes.push(isHintSub);
+        // ==========================================
+        // 1. FUNCIÓN PARA OBTENER EL CSRF TOKEN DE LAS COOKIES
+        // ==========================================
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
                 }
             }
-        });
-        renderRegistry();
-    }
-
-    function renderRegistry() {
-        const listContainer = document.getElementById('file-registry-list');
-        listContainer.innerHTML = '';
-        const files = virtualStorage.files;
-
-        if (files.length > 0) {
-            block.classList.remove('d-none');
-            Array.from(files).forEach((file, index) => {
-                const isSub = fileMetaTypes[index];
-                const div = document.createElement('div');
-                div.className = 'list-group-item d-flex justify-content-between align-items-center p-2 bg-white';
-                
-                div.innerHTML = `
-                    <div class="d-flex align-items-center text-truncate me-2 small" style="max-width: 200px;">
-                        <input class="form-check-input file-checkbox me-2 mt-0" type="checkbox" value="${index}">
-                        <i class="bi ${file.name.endsWith('.pdf') ? 'bi-file-earmark-pdf text-danger' : 'bi-box text-info'} me-2"></i>
-                        <span class="fw-medium text-truncate">${file.name}</span>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <select class="form-select form-select-sm select-file-class" style="font-size: 0.72rem; padding: 2px 20px 2px 8px;" id="file-select-${index}" onchange="updateFileType(${index}, this.value)">
-                            <option value="maestro" ${!isSub ? 'selected' : ''}>🏢 Maestro</option>
-                            <option value="sub" ${isSub ? 'selected' : ''}>🧩 Subcomponente</option>
-                        </select>
-                        <button type="button" class="btn btn-sm text-danger p-0 border-0" onclick="dropIndexedFile(${index})"><i class="bi bi-x-circle"></i></button>
-                    </div>
-                `;
-                listContainer.appendChild(div);
-            });
-            document.getElementById('selectAllFiles').checked = false;
-        } else { block.classList.add('d-none'); }
-    }
-
-    window.toggleAllCheckboxes = function(masterCheckbox) {
-        const checkboxes = document.querySelectorAll('.file-checkbox');
-        checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
-    };
-
-    window.applyClassificationToSelected = function(type) {
-        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-        
-        if (checkboxes.length === 0) { 
-            alert("Por favor, selecciona al menos un archivo marcando su casilla."); 
-            return; 
+            return cookieValue;
         }
-
-        checkboxes.forEach(cb => {
-            const idx = parseInt(cb.value);
-            fileMetaTypes[idx] = (type === 'sub');
-            document.getElementById(`file-select-${idx}`).value = type;
-            cb.checked = false;
-        });
+    
+        const virtualStorage = new DataTransfer();
+        let fileMetaTypes = [];
         
-        document.getElementById('selectAllFiles').checked = false;
-    };
-
-    window.updateFileType = function(index, value) { fileMetaTypes[index] = (value === 'sub'); };
-
-    window.dropIndexedFile = function(index) {
-        const freshStorage = new DataTransfer();
-        let freshMetaTypes = [];
-        Array.from(virtualStorage.files).forEach((file, idx) => {
-            if (idx !== index) { freshStorage.items.add(file); freshMetaTypes.push(fileMetaTypes[idx]); }
-        });
-        while(virtualStorage.items.length > 0) { virtualStorage.items.clear(); }
-        Array.from(freshStorage.files).forEach(file => virtualStorage.items.add(file));
-        fileMetaTypes = freshMetaTypes;
-        renderRegistry();
-    };
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        if (virtualStorage.files.length === 0) { alert("Carga al menos un archivo técnico."); return; }
+        const zone = document.getElementById('drop-zone');
+        const input = document.getElementById('rfq_file');
+        const block = document.getElementById('file-registry-block');
+        const form = document.getElementById('rfq-hybrid-form');
     
-        const submitBtn = document.getElementById('submit-btn');
-        const progressContainer = document.getElementById('progress-container');
-        const progressBarFill = document.getElementById('progress-bar-fill');
-        const progressStatusText = document.getElementById('progress-status-text');
-        const progressPercentage = document.getElementById('progress-percentage');
-    
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Enviando al servidor...`;
-        progressContainer.classList.remove('d-none');
-        
-        // Simular un progreso inicial para que el usuario vea actividad
-        progressBarFill.style.width = `10%`;
-        progressPercentage.textContent = `10%`;
-        progressStatusText.textContent = "Subiendo archivos e iniciando IA...";
-    
-        const initialFormData = new FormData();
-        Array.from(virtualStorage.files).forEach(f => initialFormData.append('rfq_file', f));
-        
-        const typeMapping = {};
-        Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
-        initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
-        initialFormData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
-    
-        try {
-            // 1. Enviamos los archivos. El backend los guarda y dispara Celery casi instantáneamente.
-            const initResponse = await fetch('{% url "RFQ:upload_rfq" %}', { method: 'POST', body: initialFormData });
-            const initData = await initResponse.json();
+        // Manejador del candado para evitar doble apertura de archivos
+        zone.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (zone.dataset.isClicking === "true") return; 
+            zone.dataset.isClicking = "true";
             
-            if (initData.status === 'initiated') {
-                const analysisId = initData.analysis_id;
-                
-                progressBarFill.style.width = `50%`;
-                progressPercentage.textContent = `50%`;
-                progressStatusText.textContent = "Procesando geometría 3D y leyendo planos (Esto puede tardar unos minutos)...";
-                progressBarFill.classList.add('progress-bar-animated', 'progress-bar-striped');
-    
-                // 2. INICIAMOS EL POLLING (Preguntamos cada 3 segundos)
-                const checkInterval = setInterval(async () => {
-                    try {
-                        // Consultamos un nuevo endpoint que crearemos en Django
-                        const statusRes = await fetch(`/api/rfq/check-status/?analysis_id=${analysisId}`);
-                        const statusData = await statusRes.json();
-    
-                        if (statusData.status === 'completed') {
-                            clearInterval(checkInterval);
-                            progressBarFill.style.width = `100%`;
-                            progressPercentage.textContent = `100%`;
-                            progressStatusText.textContent = "¡Análisis completo! Cargando resultados...";
-                            progressBarFill.classList.replace('bg-primary', 'bg-success');
-                            
-                            // 3. Recargamos la vista usando tu propio sistema de historial
-                            setTimeout(() => {
-                                window.location.href = `?history_id=${analysisId}`;
-                            }, 1000);
-    
-                        } else if (statusData.status === 'failed') {
-                            clearInterval(checkInterval);
-                            progressBarFill.style.width = `100%`;
-                            progressStatusText.textContent = "Error al procesar los archivos en el servidor.";
-                            progressBarFill.classList.replace('bg-primary', 'bg-danger');
-                            submitBtn.disabled = false;
-                            submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Reintentar Análisis`;
-                        }
-                    } catch (pollError) {
-                        console.warn("Fallo temporal en la conexión, reintentando en 3s...", pollError);
-                    }
-                }, 3000); // 3000 ms = 3 segundos
-            }
-        } catch (err) {
-            console.error(err);
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
-            progressStatusText.textContent = "Error de red al intentar subir los archivos.";
-        }
-    });
-
-    function renderRowAnalysisError(filename, customErrorMessage) {
-        const asyncComponentsTable = document.getElementById('async-components-table-body');
-        const rowError = document.createElement('tr');
-        const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles (Resultados Null).";
-        rowError.innerHTML = `
-            <td class="text-center"><i class="bi bi-x-circle-fill text-danger fs-5"></i></td>
-            <td><strong class="text-dark d-block small">${filename}</strong></td>
-            <td>
-                <div class="alert alert-danger mb-0 p-2 text-start rounded-3 small" style="border-left: 4px solid #dc3545;">
-                    <strong>Fallo de Escaneo:</strong> ${motivoError}
-                </div>
-            </td>
-            <td class="text-end text-muted small pe-3">N/D</td>
-        `;
-        asyncComponentsTable.appendChild(rowError);
-    }
-
-    document.getElementById('catalogSearchInput').addEventListener('keyup', function(e) {
-        const value = e.target.value.toLowerCase().trim();
-        const rows = document.querySelectorAll('#catalogTable tbody tr');
-        rows.forEach(row => {
-            const match = row.textContent.toLowerCase().includes(value);
-            row.style.display = match ? '' : 'none';
+            input.click();
+            
+            setTimeout(() => { zone.dataset.isClicking = "false"; }, 500);
         });
-    });
-</script>
+        
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('dragover'); appendFiles(e.dataTransfer.files); });
+        
+        // Limpieza de input tras selección
+        input.addEventListener('change', (e) => { 
+            appendFiles(e.target.files); 
+            e.target.value = ''; 
+        });
+    
+        function appendFiles(files) {
+            Array.from(files).forEach(file => {
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (["pdf", "step", "stp", "stl"].includes(ext)) {
+                    const exists = Array.from(virtualStorage.files).some(f => f.name === file.name && f.size === file.size);
+                    if (!exists) {
+                        virtualStorage.items.add(file);
+                        const isHintSub = !file.name.includes('24-4451') || ext !== 'pdf'; 
+                        fileMetaTypes.push(isHintSub);
+                    }
+                }
+            });
+            renderRegistry();
+        }
+    
+        function renderRegistry() {
+            const listContainer = document.getElementById('file-registry-list');
+            listContainer.innerHTML = '';
+            const files = virtualStorage.files;
+    
+            if (files.length > 0) {
+                block.classList.remove('d-none');
+                Array.from(files).forEach((file, index) => {
+                    const isSub = fileMetaTypes[index];
+                    const div = document.createElement('div');
+                    div.className = 'list-group-item d-flex justify-content-between align-items-center p-2 bg-white';
+                    
+                    div.innerHTML = `
+                        <div class="d-flex align-items-center text-truncate me-2 small" style="max-width: 200px;">
+                            <input class="form-check-input file-checkbox me-2 mt-0" type="checkbox" value="${index}">
+                            <i class="bi ${file.name.endsWith('.pdf') ? 'bi-file-earmark-pdf text-danger' : 'bi-box text-info'} me-2"></i>
+                            <span class="fw-medium text-truncate">${file.name}</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <select class="form-select form-select-sm select-file-class" style="font-size: 0.72rem; padding: 2px 20px 2px 8px;" id="file-select-${index}" onchange="updateFileType(${index}, this.value)">
+                                <option value="maestro" ${!isSub ? 'selected' : ''}>🏢 Maestro</option>
+                                <option value="sub" ${isSub ? 'selected' : ''}>🧩 Subcomponente</option>
+                            </select>
+                            <button type="button" class="btn btn-sm text-danger p-0 border-0" onclick="dropIndexedFile(${index})"><i class="bi bi-x-circle"></i></button>
+                        </div>
+                    `;
+                    listContainer.appendChild(div);
+                });
+                document.getElementById('selectAllFiles').checked = false;
+            } else { block.classList.add('d-none'); }
+        }
+    
+        window.toggleAllCheckboxes = function(masterCheckbox) {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+        };
+    
+        window.applyClassificationToSelected = function(type) {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            
+            if (checkboxes.length === 0) { 
+                alert("Por favor, selecciona al menos un archivo marcando su casilla."); 
+                return; 
+            }
+    
+            checkboxes.forEach(cb => {
+                const idx = parseInt(cb.value);
+                fileMetaTypes[idx] = (type === 'sub');
+                document.getElementById(`file-select-${idx}`).value = type;
+                cb.checked = false;
+            });
+            
+            document.getElementById('selectAllFiles').checked = false;
+        };
+    
+        window.updateFileType = function(index, value) { fileMetaTypes[index] = (value === 'sub'); };
+    
+        window.dropIndexedFile = function(index) {
+            const freshStorage = new DataTransfer();
+            let freshMetaTypes = [];
+            Array.from(virtualStorage.files).forEach((file, idx) => {
+                if (idx !== index) { freshStorage.items.add(file); freshMetaTypes.push(fileMetaTypes[idx]); }
+            });
+            while(virtualStorage.items.length > 0) { virtualStorage.items.clear(); }
+            Array.from(freshStorage.files).forEach(file => virtualStorage.items.add(file));
+            fileMetaTypes = freshMetaTypes;
+            renderRegistry();
+        };
+    
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (virtualStorage.files.length === 0) { alert("Carga al menos un archivo técnico."); return; }
+        
+            const submitBtn = document.getElementById('submit-btn');
+            const progressContainer = document.getElementById('progress-container');
+            const progressBarFill = document.getElementById('progress-bar-fill');
+            const progressStatusText = document.getElementById('progress-status-text');
+            const progressPercentage = document.getElementById('progress-percentage');
+        
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Enviando al servidor...`;
+            progressContainer.classList.remove('d-none');
+            
+            progressBarFill.style.width = `10%`;
+            progressPercentage.textContent = `10%`;
+            progressStatusText.textContent = "Subiendo archivos e iniciando IA...";
+        
+            const initialFormData = new FormData();
+            Array.from(virtualStorage.files).forEach(f => initialFormData.append('rfq_file', f));
+            
+            const typeMapping = {};
+            Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
+            initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
+            
+            // ==========================================
+            // REEMPLAZO AQUÍ: Token CSRF extraído de la cookie de forma segura
+            // ==========================================
+            initialFormData.append('csrfmiddlewaretoken', getCookie('csrftoken'));
+        
+            try {
+                // Nota: Se asegura la ruta con un string explícito '/analisis/rfq/upload/'
+                // para evitar redirecciones HTTP a HTTPS rotas por Railway.
+                const initResponse = await fetch('/analisis/rfq/upload/', { method: 'POST', body: initialFormData });
+                const initData = await initResponse.json();
+                
+                if (initData.status === 'initiated') {
+                    const analysisId = initData.analysis_id;
+                    
+                    progressBarFill.style.width = `50%`;
+                    progressPercentage.textContent = `50%`;
+                    progressStatusText.textContent = "Procesando geometría 3D y leyendo planos (Esto puede tardar unos minutos)...";
+                    progressBarFill.classList.add('progress-bar-animated', 'progress-bar-striped');
+        
+                    const checkInterval = setInterval(async () => {
+                        try {
+                            const statusRes = await fetch(`/api/rfq/check-status/?analysis_id=${analysisId}`);
+                            const statusData = await statusRes.json();
+        
+                            if (statusData.status === 'completed') {
+                                clearInterval(checkInterval);
+                                progressBarFill.style.width = `100%`;
+                                progressPercentage.textContent = `100%`;
+                                progressStatusText.textContent = "¡Análisis completo! Cargando resultados...";
+                                progressBarFill.classList.replace('bg-primary', 'bg-success');
+                                
+                                setTimeout(() => {
+                                    window.location.href = `?history_id=${analysisId}`;
+                                }, 1000);
+        
+                            } else if (statusData.status === 'failed') {
+                                clearInterval(checkInterval);
+                                progressBarFill.style.width = `100%`;
+                                progressStatusText.textContent = "Error al procesar los archivos en el servidor.";
+                                progressBarFill.classList.replace('bg-primary', 'bg-danger');
+                                submitBtn.disabled = false;
+                                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Reintentar Análisis`;
+                            }
+                        } catch (pollError) {
+                            console.warn("Fallo temporal en la conexión, reintentando en 3s...", pollError);
+                        }
+                    }, 3000);
+                }
+            } catch (err) {
+                console.error(err);
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
+                progressStatusText.textContent = "Error de red al intentar subir los archivos.";
+            }
+        });
+    
+        function renderRowAnalysisError(filename, customErrorMessage) {
+            const asyncComponentsTable = document.getElementById('async-components-table-body');
+            const rowError = document.createElement('tr');
+            const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles (Resultados Null).";
+            rowError.innerHTML = `
+                <td class="text-center"><i class="bi bi-x-circle-fill text-danger fs-5"></i></td>
+                <td><strong class="text-dark d-block small">${filename}</strong></td>
+                <td>
+                    <div class="alert alert-danger mb-0 p-2 text-start rounded-3 small" style="border-left: 4px solid #dc3545;">
+                        <strong>Fallo de Escaneo:</strong> ${motivoError}
+                    </div>
+                </td>
+                <td class="text-end text-muted small pe-3">N/D</td>
+            `;
+            asyncComponentsTable.appendChild(rowError);
+        }
+    
+        document.getElementById('catalogSearchInput').addEventListener('keyup', function(e) {
+            const value = e.target.value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#catalogTable tbody tr');
+            rows.forEach(row => {
+                const match = row.textContent.toLowerCase().includes(value);
+                row.style.display = match ? '' : 'none';
+            });
+        });
+    </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 {% endblock %}
