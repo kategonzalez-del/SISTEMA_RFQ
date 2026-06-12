@@ -111,27 +111,30 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
 
                 volume_val = part.get('volume_cm3') or part.get('volume')
                 
-                if not volume_val and clean_part_key:
+                # REFUERZO DE INGENIERÍA NPI:
+                # Si el PDF no especifica el volumen en texto, lo buscamos en los archivos 3D (.stp)
+                # que se hayan indexado previamente en este mismo lote de análisis.
+                if not volume_val:
+                    # Buscamos si existe un registro de geometría 3D en este lote
                     threed_geom = DrawingDetectedMaterial.objects.filter(
-                        Q(analysis=analysis) & 
-                        Q(bom_reference__icontains="Geometría 3D Indexada") & 
-                        Q(bom_reference__icontains=clean_part_key)
+                        analysis=analysis,
+                        bom_reference__icontains="Geometría 3D Indexada"
                     ).first()
-                    if threed_geom:
+                    
+                    if threed_geom and threed_geom.component_volumen:
                         volume_val = threed_geom.component_volumen
 
+                # Si no hubo archivo 3D, usamos el volumen que extraiga el Regex del PDF
                 if not volume_val:
                     volume_val = local_volume
                         
-                weight_val = part.get('weight_grams') or part.get('weight') or local_weight
+                weight_val = part.get('weight_grams') or part.get('weight')
                 data_source_flag = "Extraído de Plano PDF"
 
-                if not weight_val and local_weight:
-                    weight_val = local_weight
-                    data_source_flag = "Extraído vía Regex PDF (Masse/Weight)"
-
+                # CÁLCULO DUAL NPI: ¡Si tenemos volumen y densidad de catálogo, calculamos el peso!
                 if volume_val and not weight_val:
-                    density = matched_material_db.density if matched_material_db else 1.05
+                    # Si el embedding encontró la resina, usamos su densidad real, si no, una genérica (1.05)
+                    density = matched_material_db.density if matched_material_db and matched_material_db.density else 1.05
                     try:
                         weight_val = float(volume_val) * float(density)
                         data_source_flag = f"Peso Estimado ({volume_val} cm³ x {density} g/cm³)"

@@ -10,11 +10,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{% static 'css/RFQ/rfq.css' %}">
 <style>
-    
     .batch-tool-btn { font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
     .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; }
     .historical-badge { font-size: 0.68rem; font-weight: 500; display: block; margin-top: 4px; color: #64748b; font-family: 'Inter', sans-serif; }
-
 </style>
 {% endblock %}
 
@@ -205,9 +203,17 @@
                                         </td>
                                         <td class="text-end pe-3">
                                             <div class="dual-weight-box text-start">
-                                                <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> {{ component.component_weight|default:"N/D" }} g</div>
-                                                <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> {{ component.component_weight|multiply_filter:0.00220462|round_filter:4|default:"N/D" }} lbs</div>
-                                                <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture me-1"></i> {{ component.component_volumen|default:"N/D" }} cm³</div>
+                                                {% if component.component_weight %}
+                                                    <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> {{ component.component_weight }} g</div>
+                                                    <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> {{ component.component_weight|multiply_filter:0.00220462|round_filter:4 }} lbs</div>
+                                                {% else %}
+                                                    <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> N/D</div>
+                                                    <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> N/D</div>
+                                                {% endif %}
+                                                
+                                                <div class="fw-bold text-info border-top pt-1 mt-1">
+                                                    <i class="bi bi-moisture me-1"></i> {% if component.component_volumen %}{{ component.component_volumen }} cm³{% else %}N/D{% endif %}
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>
@@ -411,14 +417,9 @@
             Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
             initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
             
-            // ==========================================
-            // REEMPLAZO AQUÍ: Token CSRF extraído de la cookie de forma segura
-            // ==========================================
             initialFormData.append('csrfmiddlewaretoken', getCookie('csrftoken'));
         
             try {
-                // Nota: Se asegura la ruta con un string explícito '/analisis/rfq/upload/'
-                // para evitar redirecciones HTTP a HTTPS rotas por Railway.
                 const initResponse = await fetch('/analisis/rfq/upload/', { method: 'POST', body: initialFormData });
                 const initData = await initResponse.json();
                 
@@ -492,6 +493,49 @@
                 row.style.display = match ? '' : 'none';
             });
         });
+
+        // =======================================================
+        // FUNCIÓN CLAVE NPI: INYECCIÓN ASÍNCRONA DE PESO Y VOLUMEN
+        // =======================================================
+        function renderComponentRow(component) {
+            const asyncComponentsTable = document.getElementById('async-components-table-body');
+            const row = document.createElement('tr');
+            
+            const weightGrams = component.component_weight ? `${component.component_weight} g` : 'N/D';
+            const weightLbs = component.component_weight_lbs ? `${component.component_weight_lbs} lbs` : 'N/D';
+            const volumeCm3 = component.component_volumen ? `${component.component_volumen} cm³` : 'N/D';
+        
+            row.innerHTML = `
+                <td class="fw-bold text-primary fs-6">${component.part_number || "Insumo / Adicional"}</td>
+                <td>
+                    <span class="d-block fw-bold text-dark mb-1">${component.description}</span>
+                    <small class="text-muted d-block text-truncate" style="max-width: 250px; font-size: 0.72rem;">
+                        <i class="bi bi-info-circle me-1"></i> ${component.bom_reference}
+                    </small>
+                </td>
+                <td>
+                    <div class="p-3 card-audit shadow-sm bg-white">
+                        ${component.detected_material 
+                            ? `<div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo</span></div>
+                               <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;">${component.detected_material}</h6>`
+                            : `<div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
+                               <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Req: ${component.raw_material_text}</h6>`
+                        }
+                        <div class="p-2 bg-light rounded text-secondary mt-2" style="font-size: 0.75rem; border-left: 3px solid #64748b;">
+                            <strong>Ficha:</strong> Fam: ${component.detected_family} | Color: ${component.detected_color}
+                        </div>
+                    </div>
+                </td>
+                <td class="text-end pe-3">
+                    <div class="dual-weight-box text-start">
+                        <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> ${weightGrams}</div>
+                        <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> ${weightLbs}</div>
+                        <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture me-1"></i> ${volumeCm3}</div>
+                    </div>
+                </td>
+            `;
+            asyncComponentsTable.appendChild(row);
+        }    
     </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 {% endblock %}
