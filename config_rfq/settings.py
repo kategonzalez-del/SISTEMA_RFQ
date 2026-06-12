@@ -192,6 +192,6 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
 FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800
 
 # Obliga a Django a escribir los archivos directamente en el disco temporal, protegiendo la RAM
-FILE_UPLOAD_HANDLERS = [
-    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
-]
+#FILE_UPLOAD_HANDLERS = [
+#    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+#]
