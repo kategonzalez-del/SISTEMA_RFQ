@@ -55,43 +55,46 @@ def upload_and_process_rfq(request):
         uploaded_files = request.FILES.getlist('rfq_file')
         fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'tmp'))
         
-        primary_pdf = None
+        primary_pdf_name = None
         all_saved_files = []
         
-        # 1. Guardamos todos los archivos físicamente en el servidor web temporalmente
+        # 1. Guardamos absolutamente todos los archivos físicamente de forma segura primero
         for u_file in uploaded_files:
             filename = fs.save(u_file.name, u_file)
             file_path = fs.path(filename)
             ext = os.path.splitext(u_file.name)[1].lower()
-            all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': ext})
-            if ext == '.pdf' and not primary_pdf:
-                primary_pdf = u_file
+            all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': f_ext})
+            
+            # Recordamos el nombre de archivo del primer PDF que guardamos con éxito
+            if ext == '.pdf' and not primary_pdf_name:
+                primary_pdf_name = filename
 
-        if not primary_pdf and uploaded_files:
-            primary_pdf = uploaded_files[0]
+        # Si no hubo PDF, usamos el nombre del primer archivo del lote
+        if not primary_pdf_name and all_saved_files:
+            primary_pdf_name = all_saved_files[0]['name']
 
+        # 2. Creamos el registro de análisis usando el archivo físico ya guardado.
+        # Al pasarle una cadena (el nombre) en lugar del objeto 'u_file' crudo, 
+        # Django no intentará buscar nada en la carpeta temporal /tmp/ del contenedor.
         analysis = DrawingAnalysis.objects.create(
-            uploaded_file=primary_pdf,
+            uploaded_file=f"tmp/{primary_pdf_name}",
             raw_text="",
             gemini_raw_json={},
             status='processing'
         )
 
-        # Determinar si es subcomponente (por defecto False en la carga masiva inicial)
         is_subcomponent_manual = False
 
-        # 2. Iteramos sobre la lista de archivos guardados para convertirlos a Base64 y mandarlos a Celery
+        # 3. Mandamos las tareas a Celery mediante Base64
         for file_info in all_saved_files:
             f_name = file_info['name']
             f_path = file_info['path']
             f_ext = file_info['ext']
 
-            # LEEMOS EL ARCHIVO Y LO CONVERTIMOS A CADENA DE TEXTO (BASE64)
             with open(f_path, 'rb') as f:
                 file_bytes = f.read()
                 file_base64 = base64.b64encode(file_bytes).decode('utf-8')
 
-            # LE PASAMOS LAS VARIABLES EXTRAÍDAS DE NUESTRO DICCIONARIO A CELERY
             process_file_in_background.delay(
                 analysis.id, f_name, file_base64, f_ext, is_subcomponent_manual
             )
