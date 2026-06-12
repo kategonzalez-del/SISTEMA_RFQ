@@ -86,24 +86,24 @@ WSGI_APPLICATION = 'config_rfq.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-# --- DATABASES ---
-# --- DATABASES ---
 import dj_database_url
 
-# Intentamos leer la URL de conexión que Railway genera por defecto (MYSQLURL o DATABASE_URL)
-DATABASE_URL = os.getenv('MYSQLURL') or os.getenv('DATABASE_URL')
+# Buscamos explícitamente MYSQL_URL con guion bajo, tal como sale en tu panel de Railway
+DATABASE_URL = os.getenv('MYSQL_URL') or os.getenv('MYSQLURL') or os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
-    # Si estamos en la nube de Railway, esta librería configura todo sola de forma automática
+    # Si detecta la URL en la nube de Railway, configura el diccionario dinámicamente
     DATABASES = {
         'default': dj_database_url.config(
             default=DATABASE_URL,
             conn_max_age=600
         )
     }
+    # Forzar el motor de MySQL en producción si la librería tiene dudas con el esquema
+    if DATABASES['default']['ENGINE'] == 'django.db.backends.sqlite3':
+        DATABASES['default']['ENGINE'] = 'django.db.backends.mysql'
 else:
-    # Tu configuración local de siempre para cuando trabajas en tu computadora
+    # Tu base de datos local para cuando trabajas offline en tu computadora
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
