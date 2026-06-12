@@ -161,7 +161,14 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+# Habilitar almacenamiento eficiente y compresión con WhiteNoise
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -170,4 +177,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # gemini API
 GEMINI_API_KEY = "AIzaSyA7BVi_QiylCMSjKc8wXm2HWzX1YsBB2P8"
+
+# 52428800 bytes = 50 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800
 
