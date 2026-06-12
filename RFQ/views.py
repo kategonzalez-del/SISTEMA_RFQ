@@ -75,6 +75,20 @@ def upload_and_process_rfq(request):
             status='processing'
         )
 
+        # Enviar los archivos automáticamente a Celery desde aquí
+        for file_info in all_saved_files:
+            # Determinamos si se marcó manualmente como subcomponente desde el mapa que mandó el cliente
+            # (opcional, dependiendo de cómo manejes 'manual_file_types' en tu request.POST)
+            is_sub = False 
+            
+            process_file_in_background.delay(
+                analysis.id, 
+                file_info['name'], 
+                file_info['path'], 
+                file_info['ext'], 
+                is_sub
+            )
+
         return JsonResponse({
             'status': 'initiated',
             'analysis_id': analysis.id,
@@ -177,7 +191,6 @@ def finalize_analysis_status(request):
     
 from django.http import JsonResponse
 from .models import DrawingAnalysis
-
 def check_analysis_status(request):
     """
     Endpoint ultrarrápido para que el frontend consulte cómo va la tarea de Celery.
@@ -189,8 +202,11 @@ def check_analysis_status(request):
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
         return JsonResponse({
-            'status': analysis.status, # Puede ser 'pending', 'processing', 'completed', o 'failed'
-            'part_number': analysis.part_number
+            'status': analysis.status, # 'pending', 'processing', 'completed', o 'failed'
+            # Eliminamos 'part_number' para evitar el AttributeError
         })
     except DrawingAnalysis.DoesNotExist:
         return JsonResponse({'error': 'No existe'}, status=404)
+    except Exception as e:
+        # Añadimos este fallback para que si algo más falla, no rompa la comunicación HTTP
+        return JsonResponse({'status': 'failed', 'error': str(e)}, status=500)
