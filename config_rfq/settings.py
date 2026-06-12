@@ -34,6 +34,11 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$
 DEBUG = True
 ALLOWED_HOSTS = ['sistemarfq-production.up.railway.app', 'localhost', '127.0.0.1']
 
+# Añade esta sección crucial para que Django acepte las peticiones POST de Railway:
+CSRF_TRUSTED_ORIGINS = [
+    'https://sistemarfq-production.up.railway.app',
+]
+
 # O si prefieres abrirlo por completo para asegurar:
 # ALLOWED_HOSTS = ['*']
 # Application definition
@@ -183,3 +188,7 @@ GEMINI_API_KEY = "AIzaSyA7BVi_QiylCMSjKc8wXm2HWzX1YsBB2P8"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
 FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800
 
+# Obliga a Django a escribir los archivos directamente en el disco temporal, protegiendo la RAM
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
