@@ -63,7 +63,7 @@ def upload_and_process_rfq(request):
             filename = fs.save(u_file.name, u_file)
             file_path = fs.path(filename)
             ext = os.path.splitext(u_file.name)[1].lower()
-            all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': f_ext})
+            all_saved_files.append({'name': u_file.name, 'path': file_path, 'ext': ext})
             
             # Recordamos el nombre de archivo del primer PDF que guardamos con éxito
             if ext == '.pdf' and not primary_pdf_name:
