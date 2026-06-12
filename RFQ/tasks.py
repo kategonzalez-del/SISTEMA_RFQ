@@ -7,7 +7,7 @@ from celery import shared_task
 from django.db.models import Q
 from .models import DrawingAnalysis, DrawingDetectedMaterial, PartComponent, Material
 
-# Importaciones diferidas dentro de la tarea para que no pesen al arrancar pip listDjango
+# Importaciones diferidas dentro de la tarea para que no pesen al arrancar Django
 from RFQ.services.parsers.pdf_parser import extract_text_from_pdf, extract_volume, extract_weight
 from RFQ.services.ai.structured_extractor import extract_rfq_data
 from RFQ.services.materials.embedding_matcher import match_material
@@ -19,14 +19,13 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
         local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
-        os.makedirs(local_dir, exist_ok=True) # Si no existe, Django la crea automáticamente
+        os.makedirs(local_dir, exist_ok=True) 
         
         file_path = os.path.join(local_dir, file_name)
         
         # RECONSTRUIMOS EL ARCHIVO ORIGINAL A PARTIR DEL TEXTO ENVIADO
         with open(file_path, 'wb') as f:
             f.write(base64.b64decode(file_base64.encode('utf-8')))
-        
         
         classification_string = f"{file_name}: 🧩 Subcomponente 2D" if is_subcomponent_manual else f"{file_name}: 🏢 Plano de Ensamble Maestro"
 
@@ -40,13 +39,26 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             volume_cm3 = threed_data.get('volume_cm3', 0)
             classification_string = f"{file_name}: 📐 Geometría 3D Indexada ({volume_cm3} cm³)"
             
-            # Puedes actualizar estados en la base de datos para que el usuario lo vea
+            DrawingDetectedMaterial.objects.create(
+                analysis=analysis,
+                part_number=os.path.splitext(file_name)[0],
+                raw_material_text="Geometría 3D",
+                detected_family="N/D",
+                detected_color="N/D",
+                component_volumen=round(float(volume_cm3), 2) if volume_cm3 else None,
+                bom_reference=classification_string
+            )
+            
+            analysis.status = 'completed'
+            analysis.save()
             return {'success': True, 'type': '3d', 'file_name': file_name, 'classification': classification_string}
 
         # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
         elif ext == '.pdf':
             raw_text = extract_text_from_pdf(file_path)
-            analysis.raw_text += f"\n--- ORIGEN: {file_name} ---\n" + raw_text
+            
+            # CORRECCIÓN ENTORNO LIMPIO: Evitamos acumular basura de PDFs viejos del mismo lote
+            analysis.raw_text = f"--- ORIGEN: {file_name} ---\n" + raw_text
             
             clean_text_for_regex = re.sub(r'MASSE\s*:\s*WEIGHT', 'WEIGHT', raw_text, flags=re.IGNORECASE)
             local_volume = extract_volume(raw_text)
@@ -95,45 +107,49 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 if not alt_resin_name or alt_resin_name.upper() == 'NULL':
                     alt_resin_name = 'Ninguna registrada'
 
+                # SOPORTE MULTI-MATERIAL: Clasificamos según las reglas de la IA
+                detected_type = "RESIN"
+                if resin_family_ia.upper() in ['PAINT', 'TINTA', 'INK']:
+                    detected_type = "PAINT"
+                elif resin_family_ia.upper() in ['PIGMENT', 'MASTERBATCH', 'PIGMENTO']:
+                    detected_type = "PIGMENT"
+                elif resin_family_ia.upper() in ['METAL', 'INSERT']:
+                    detected_type = "METAL"
+
                 matched_material_db = None
                 is_matched_via_alternate = False
                 
+                # Buscador semántico con umbral estricto para evitar mezclas
                 if isinstance(commercial_name_ia, str) and commercial_name_ia.strip():
                     match_result = match_material(commercial_name_ia)
-                    if match_result and match_result["confidence"] >= 45:
+                    if match_result and match_result["confidence"] >= 70:
                         matched_material_db = match_result["material"]
                 
                 if not matched_material_db and alt_resin_name and alt_resin_name != 'Ninguna registrada':
                     alt_match_result = match_material(alt_resin_name)
-                    if alt_match_result and alt_match_result["confidence"] >= 45:
+                    if alt_match_result and alt_match_result["confidence"] >= 70:
                         matched_material_db = alt_match_result["material"]
                         is_matched_via_alternate = True
 
                 volume_val = part.get('volume_cm3') or part.get('volume')
                 
-                # REFUERZO DE INGENIERÍA NPI:
-                # Si el PDF no especifica el volumen en texto, lo buscamos en los archivos 3D (.stp)
-                # que se hayan indexado previamente en este mismo lote de análisis.
+                # CONSOLIDACIÓN NPI: Heredamos volumen geométrico del .stp si el PDF no lo tiene escrito
                 if not volume_val:
-                    # Buscamos si existe un registro de geometría 3D en este lote
                     threed_geom = DrawingDetectedMaterial.objects.filter(
                         analysis=analysis,
                         bom_reference__icontains="Geometría 3D Indexada"
                     ).first()
-                    
                     if threed_geom and threed_geom.component_volumen:
                         volume_val = threed_geom.component_volumen
 
-                # Si no hubo archivo 3D, usamos el volumen que extraiga el Regex del PDF
                 if not volume_val:
                     volume_val = local_volume
                         
                 weight_val = part.get('weight_grams') or part.get('weight')
                 data_source_flag = "Extraído de Plano PDF"
 
-                # CÁLCULO DUAL NPI: ¡Si tenemos volumen y densidad de catálogo, calculamos el peso!
+                # Cálculo de masa basado en volumen de ingeniería y densidad de catálogo
                 if volume_val and not weight_val:
-                    # Si el embedding encontró la resina, usamos su densidad real, si no, una genérica (1.05)
                     density = matched_material_db.density if matched_material_db and matched_material_db.density else 1.05
                     try:
                         weight_val = float(volume_val) * float(density)
@@ -175,7 +191,6 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                         quantity=part.get('quantity', 1)
                     )
 
-                # CÁLCULO DUAL DE PESO EN LIBRAS (1 gramo = 0.00220462 libras)
                 weight_lbs = round(float(weight_val) * 0.00220462, 4) if weight_val else None
 
                 parts_found_payload.append({

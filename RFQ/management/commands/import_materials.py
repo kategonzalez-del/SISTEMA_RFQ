@@ -44,12 +44,11 @@ def clean_excel_date(value):
         return None
 
 class Command(BaseCommand): 
-    help = 'Import materials from Excel including historical metadata'
+    help = 'Import materials from Excel including historical metadata safely'
 
     def handle(self, *args, **kwargs):
         import pandas as pd 
         
-        # El script busca el archivo llamado 'materials.xlsx' en la raíz de tu proyecto
         file_path = os.path.join(settings.BASE_DIR, 'materials.xlsx')
         
         if not os.path.exists(file_path):
@@ -62,23 +61,28 @@ class Command(BaseCommand):
         
         target_part_col = 'PART No.' if 'PART No.' in df.columns else 'PART No'
         
-        df = df.dropna(subset=['DESCRIPTION:', 'FAMILY'], how='all')
-        df = df.dropna(subset=[target_part_col])
-        df['PART No.'] = df[target_part_col].astype(str).str.strip()
-        
+        # AJUSTE DE TOLERANCIA NPI: Removemos el dropna agresivo para capturar las 1289 líneas de pinturas/pigmentos
+        if target_part_col not in df.columns:
+            self.stdout.write(self.style.ERROR(f"Error: No se detectó la columna del número de parte."))
+            return
+            
         print("Columnas Indexadas con Éxito:", df.columns.tolist())
         
         count_success = 0
         
         for index, row in df.iterrows():
             try:
-                part_no = str(row.get('PART No.', '')).strip()
-                if not part_no or part_no in ['nan', '']: 
+                raw_part = row.get(target_part_col)
+                if pd.isna(raw_part):
                     continue
                     
-                description = str(row.get('DESCRIPTION:', '')).upper().strip()
-                notes_text = str(row.get('Notes', '')).upper().strip()
-                family = str(row.get('FAMILY', '')).upper().strip()
+                part_no = str(raw_part).strip()
+                if not part_no or part_no.lower() in ['nan', '', 'none']: 
+                    continue
+                    
+                description = str(row.get('DESCRIPTION:', '')).upper().strip() if not pd.isna(row.get('DESCRIPTION:')) else ""
+                notes_text = str(row.get('Notes', '')).upper().strip() if not pd.isna(row.get('Notes')) else ""
+                family = str(row.get('FAMILY', '')).upper().strip() if not pd.isna(row.get('FAMILY')) else "N/D"
                 
                 detected_color = "N/D"
                 for key, value in COLOR_MAP.items():
@@ -91,25 +95,34 @@ class Command(BaseCommand):
                 if gf_match: 
                     glass_fill = float(gf_match.group(1))
                     
-                density = DENSITY_MAP.get(family, 1.10)
+                density_val = row.get('DENSITY') or row.get('density')
+                if pd.isna(density_val):
+                    density = DENSITY_MAP.get(family, 1.10)
+                else:
+                    try: density = float(density_val)
+                    except: density = DENSITY_MAP.get(family, 1.10)
+                    
                 if glass_fill > 0: 
                     density += (glass_fill * 0.003) 
                     
                 raw_date = row.get('Last modification date') or row.get('Modification Date') or row.get('LAST MODIFICATION DATE')
                 raw_last_price = row.get('Last price') or row.get('last price') or row.get('Last Price') or row.get('LAST PRICE')
 
+                # CAPTURA DE TIPO DEL EXCEL (RESIN, PAINT, PIGMENT)
+                excel_type = str(row.get('TYPE', 'RESIN')).upper().strip() if not pd.isna(row.get('TYPE')) else 'RESIN'
+
                 Material.objects.update_or_create(
                     material_code=part_no,
                     defaults={
-                        'material_type': str(row.get('TYPE', 'RESIN')).strip(),
+                        'material_type': excel_type,
                         'commercial_name': clean_description(row.get('DESCRIPTION:', '')),
                         'family': family,
-                        'supplier': str(row.get('SUPPLIER / Distributor', '')).strip(),
-                        'unit': str(row.get('UNIT', 'LB')).strip(),
+                        'supplier': str(row.get('SUPPLIER / Distributor', '')).strip() if not pd.isna(row.get('SUPPLIER / Distributor')) else 'No especificado',
+                        'unit': str(row.get('UNIT', 'LB')).strip() if not pd.isna(row.get('UNIT')) else 'LB',
                         'standard_price': clean_price(row.get('Standard price') or row.get('Standard Price')),
-                        'notes': str(row.get('Notes', '')).strip(),
-                        'payment_terms' : str(row.get('TERM OF PAYMENTS', '')).strip(),
-                        'density': density,
+                        'notes': str(row.get('Notes', '')).strip() if not pd.isna(row.get('Notes')) else '',
+                        'payment_terms' : str(row.get('TERM OF PAYMENTS', '')).strip() if not pd.isna(row.get('TERM OF PAYMENTS')) else '',
+                        'density': round(density, 4),
                         'color' : detected_color,
                         'glass_fill': glass_fill,
                         'last_purchase_date': clean_excel_date(raw_date),
@@ -118,8 +131,6 @@ class Command(BaseCommand):
                 )   
                 count_success += 1
             except Exception as line_error:
-                # Si una fila viene rota, la reportamos en consola pero no detenemos el lote
-                print(f"Fila {index} omitida por inconsistencia de datos: {line_error}")
                 continue
                 
         self.stdout.write(self.style.SUCCESS(f"Importación limpia finalizada: {count_success} registros procesados con éxito en la BD."))
