@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import base64
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.core.files.storage import FileSystemStorage
@@ -57,6 +58,7 @@ def upload_and_process_rfq(request):
         primary_pdf = None
         all_saved_files = []
         
+        # 1. Guardamos todos los archivos físicamente en el servidor web temporalmente
         for u_file in uploaded_files:
             filename = fs.save(u_file.name, u_file)
             file_path = fs.path(filename)
@@ -75,18 +77,23 @@ def upload_and_process_rfq(request):
             status='processing'
         )
 
-        # Enviar los archivos automáticamente a Celery desde aquí
+        # Determinar si es subcomponente (por defecto False en la carga masiva inicial)
+        is_subcomponent_manual = False
+
+        # 2. Iteramos sobre la lista de archivos guardados para convertirlos a Base64 y mandarlos a Celery
         for file_info in all_saved_files:
-            # Determinamos si se marcó manualmente como subcomponente desde el mapa que mandó el cliente
-            # (opcional, dependiendo de cómo manejes 'manual_file_types' en tu request.POST)
-            is_sub = False 
-            
+            f_name = file_info['name']
+            f_path = file_info['path']
+            f_ext = file_info['ext']
+
+            # LEEMOS EL ARCHIVO Y LO CONVERTIMOS A CADENA DE TEXTO (BASE64)
+            with open(f_path, 'rb') as f:
+                file_bytes = f.read()
+                file_base64 = base64.b64encode(file_bytes).decode('utf-8')
+
+            # LE PASAMOS LAS VARIABLES EXTRAÍDAS DE NUESTRO DICCIONARIO A CELERY
             process_file_in_background.delay(
-                analysis.id, 
-                file_info['name'], 
-                file_info['path'], 
-                file_info['ext'], 
-                is_sub
+                analysis.id, f_name, file_base64, f_ext, is_subcomponent_manual
             )
 
         return JsonResponse({

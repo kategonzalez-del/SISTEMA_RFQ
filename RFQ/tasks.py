@@ -1,11 +1,13 @@
 import os
 import json
 import re
+import base64
+from django.conf import settings
 from celery import shared_task
 from django.db.models import Q
 from .models import DrawingAnalysis, DrawingDetectedMaterial, PartComponent, Material
 
-# Importaciones diferidas dentro de la tarea para que no pesen al arrancar Django
+# Importaciones diferidas dentro de la tarea para que no pesen al arrancar pip listDjango
 from RFQ.services.parsers.pdf_parser import extract_text_from_pdf, extract_volume, extract_weight
 from RFQ.services.ai.structured_extractor import extract_rfq_data
 from RFQ.services.materials.embedding_matcher import match_material
@@ -13,9 +15,19 @@ from RFQ.services.cad.step_parser import analyze_step
 from RFQ.services.cad.stl_parser import analyze_stl
 
 @shared_task
-def process_file_in_background(analysis_id, file_name, file_path, ext, is_subcomponent_manual):
+def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subcomponent_manual):
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
+        local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
+        os.makedirs(local_dir, exist_ok=True) # Si no existe, Django la crea automáticamente
+        
+        file_path = os.path.join(local_dir, file_name)
+        
+        # RECONSTRUIMOS EL ARCHIVO ORIGINAL A PARTIR DEL TEXTO ENVIADO
+        with open(file_path, 'wb') as f:
+            f.write(base64.b64decode(file_base64.encode('utf-8')))
+        
+        
         classification_string = f"{file_name}: 🧩 Subcomponente 2D" if is_subcomponent_manual else f"{file_name}: 🏢 Plano de Ensamble Maestro"
 
         # CASO 1: ARCHIVOS 3D
