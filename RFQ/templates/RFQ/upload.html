@@ -432,7 +432,7 @@
         
                     const checkInterval = setInterval(async () => {
                         try {
-                            const statusRes = await fetch(`/api/rfq/check-status/?analysis_id=${analysisId}`);
+                            const statusRes = await fetch(`/analisis/api/rfq/check-status/?analysis_id=${analysisId}`);
                             const statusData = await statusRes.json();
         
                             if (statusData.status === 'completed') {

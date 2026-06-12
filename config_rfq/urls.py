@@ -16,9 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from RFQ import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('analisis/', include('RFQ.urls')), 
+    path('api/rfq/check-status/', views.check_analysis_status, name='check_analysis_status'),
 
 ]
