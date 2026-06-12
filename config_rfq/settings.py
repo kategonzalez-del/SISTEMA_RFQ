@@ -30,7 +30,8 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-+vqz2mpad(o$r*=df@rmflbxu$
 
 # SECURITY WARNING: don't run with debug turned on in production!
 # Si está en Railway será False, si estás local será True
-DEBUG = os.getenv('RAILWAY_ENVIRONMENT_NAME') is None
+# Cambia esto por un momento:
+DEBUG = True
 ALLOWED_HOSTS = ['sistemarfq-production.up.railway.app', 'localhost', '127.0.0.1']
 
 # O si prefieres abrirlo por completo para asegurar:
