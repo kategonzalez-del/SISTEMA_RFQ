@@ -201,7 +201,7 @@
                                                     <h6 class="text-dark fw-bold mb-1" style="font-size: 0.90rem;">{{ component.detected_material.commercial_name }}</h6>
                                                     <div class="small text-muted mt-2" style="font-size: 0.72rem;">
                                                         <strong>Familia:</strong> {{ component.detected_family }} | <strong>Color:</strong> {{ component.detected_color }}<br>
-                                                        <strong>Resina Alterna:</strong> {{ component.bom_reference|extract_alternate_name }}
+                                                        <strong>Resina Alterna:</strong> {% if "Alt:" in component.bom_reference %}{{ component.bom_reference|split_origin_name }}{% else %}Ninguna registrada{% endif %}
                                                     </div>
                                                 </div>
                                             {% else %}
@@ -210,7 +210,7 @@
                                                     <h6 class="text-danger fw-bold mb-1" style="font-size: 0.90rem;">Req: {{ component.raw_material_text }}</h6>
                                                     <div class="small text-muted mt-2" style="font-size: 0.72rem;">
                                                         <strong>Familia:</strong> {{ component.detected_family }} | <strong>Color:</strong> {{ component.detected_color }}<br>
-                                                        <strong>Resina Alterna:</strong> {{ component.bom_reference|extract_alternate_name }}
+                                                        <strong>Resina Alterna:</strong> {% if "Alt:" in component.bom_reference %}{{ component.bom_reference|split_origin_name }}{% else %}Ninguna registrada{% endif %}
                                                     </div>
                                                 </div>
                                             {% endif %}
