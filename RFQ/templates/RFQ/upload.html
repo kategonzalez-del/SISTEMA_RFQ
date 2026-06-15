@@ -450,25 +450,36 @@
                                 clearInterval(checkInterval);
                                 return;
                             }
+                            
+                            // 1. Consultamos el estado general y los componentes parciales acumulados en la BD
                             const statusRes = await fetch(`/analisis/api/rfq/check-status/?analysis_id=${analysisId}`);
                             const statusData = await statusRes.json();
         
+                            // CAMBIO ESTRATÉGICO NPI: Si el backend ya guardó datos parciales en MySQL, 
+                            // los pintamos de inmediato en la tabla sin esperar a que termine el lote completo.
+                            if (statusData.components && statusData.components.length > 0) {
+                                document.getElementById('results-wrapper-block').classList.remove('d-none');
+                                const tableBody = document.getElementById('async-components-table-body');
+                                tableBody.innerHTML = ''; // Limpiamos para evitar duplicados
+                                
+                                statusData.components.forEach(comp => {
+                                    renderComponentRow(comp);
+                                });
+                            }
+
                             if (statusData.status === 'processing') {
                                 progressBarFill.style.width = `75%`;
                                 progressPercentage.textContent = `75%`;
-                                progressStatusText.textContent = "Ejecutando match semántico por coseno y cálculo de pesos...";
+                                progressStatusText.textContent = "IA activa: Extrayendo especificaciones y emparejando catálogo...";
                             }
                             
-                            // MEJORA FLUJO DE INGENIERÍA: 
-                            // En lugar de depender de la velocidad de un .stp individual, forzamos
-                            // la llamada a finalize-status únicamente cuando el backend confirme el término real.
                             if (statusData.status === 'completed') {
                                 clearInterval(checkInterval);
                                 progressBarFill.style.width = `90%`;
                                 progressPercentage.textContent = `90%`;
                                 progressStatusText.textContent = "Consolidando nomenclaturas industriales...";
 
-                                // Ejecutamos el cierre del lote de forma síncrona segura
+                                // Ejecutamos el cierre definitivo del lote
                                 const finalizeRes = await fetch('/analisis/api/rfq/finalize-status/', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
@@ -483,19 +494,19 @@
                                 
                                 setTimeout(() => {
                                     window.location.href = window.location.pathname + `?history_id=${analysisId}`;
-                                }, 1000);
+                                }, 1200);
         
                             } else if (statusData.status === 'failed') {
                                 clearInterval(checkInterval);
                                 progressBarFill.style.width = `100%`;
-                                progressPercentage.textContent = `100%`;
+                                progressPercentage.textContent = `Abortado`;
                                 progressStatusText.textContent = "Análisis detenido o cancelado.";
                                 progressBarFill.classList.replace('bg-primary', 'bg-danger');
                                 submitBtn.disabled = false;
                                 submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Iniciar Nuevo Lote`;
                             }
                         } catch (pollError) {
-                            console.warn("Retraso en la respuesta del contenedor...", pollError);
+                            console.warn("Esperando respuesta estable del contenedor...", pollError);
                         }
                     }, 3000);
                 }

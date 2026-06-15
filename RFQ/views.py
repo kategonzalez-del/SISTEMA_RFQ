@@ -202,23 +202,38 @@ def finalize_analysis_status(request):
 from django.http import JsonResponse
 from .models import DrawingAnalysis
 def check_analysis_status(request):
-    """
-    Endpoint ultrarrápido para que el frontend consulte cómo va la tarea de Celery.
-    """
     analysis_id = request.GET.get('analysis_id')
     if not analysis_id:
         return JsonResponse({'error': 'Falta el ID'}, status=400)
         
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
+        detected_items = analysis.detected_materials.all()
+        
+        # Serializamos los renglones que ya se hayan guardado hasta este milisegundo
+        components_payload = []
+        for item in detected_items:
+            weight_lbs = round(float(item.component_weight) * 0.00220462, 4) if item.component_weight else None
+            components_payload.append({
+                'part_number': item.part_number,
+                'description': item.bom_reference.split('|')[0].strip(),
+                'bom_reference': item.bom_reference,
+                'detected_material': item.detected_material.commercial_name if item.detected_material else None,
+                'material_code': item.detected_material.material_code if item.detected_material else None,
+                'raw_material_text': item.raw_material_text,
+                'detected_family': item.detected_family,
+                'detected_color': item.detected_color,
+                'component_weight': item.component_weight,
+                'component_weight_lbs': weight_lbs,
+                'component_volumen': item.component_volumen,
+                'alternative_resin': 'Evaluando...'
+            })
+
         return JsonResponse({
-            'status': analysis.status, # 'pending', 'processing', 'completed', o 'failed'
-            # Eliminamos 'part_number' para evitar el AttributeError
+            'status': analysis.status,
+            'components': components_payload # ¡Aquí viaja la información progresiva!
         })
-    except DrawingAnalysis.DoesNotExist:
-        return JsonResponse({'error': 'No existe'}, status=404)
     except Exception as e:
-        # Añadimos este fallback para que si algo más falla, no rompa la comunicación HTTP
         return JsonResponse({'status': 'failed', 'error': str(e)}, status=500)
     
 @csrf_exempt
