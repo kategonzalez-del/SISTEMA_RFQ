@@ -1,83 +1,121 @@
-from functools import lru_cache
+import gc
 import numpy as np
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from RFQ.models import Material
 
-material_cache = []
-material_vectors = None
+# =====================================================================
+# OPTIMIZACIÓN GLOBAL DE MEMORIA PARA RAILWAY
+# Reemplazamos la lógica pesada por estructuras primitivas ligeras.
+# No guardamos instancias completas de Modelos de Django en caché.
+# =====================================================================
+_MODEL_INSTANCE = None
+_MATERIAL_IDS = []       # Guardamos solo IDs (enteros), consume 99% menos RAM
+_MATERIAL_VECTORS = None
 
 
-@lru_cache(maxsize=1)
 def get_model():
-    from sentence_transformers import SentenceTransformer
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    """Carga el transformador semántico una sola vez de forma estricta en CPU."""
+    global _MODEL_INSTANCE
+    if _MODEL_INSTANCE is None:
+        # Forzar explícitamente el uso de CPU disminuye el footprint de memoria inicial
+        _MODEL_INSTANCE = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+    return _MODEL_INSTANCE
 
 
 def build_material_index():
-    global material_cache
-    global material_vectors
+    """Genera la matriz de vectores optimizando el uso de la base de datos."""
+    global _MATERIAL_IDS
+    global _MATERIAL_VECTORS
 
-    materials = Material.objects.all()
+    # Traemos EXCLUSIVAMENTE los campos necesarios mediante un Query directo y rápido
+    materials_data = Material.objects.values_list('id', 'family', 'commercial_name', 'color', 'material_code')
 
-    material_cache = []
+    if not materials_data:
+        _MATERIAL_IDS = []
+        _MATERIAL_VECTORS = None
+        return
+
+    local_ids = []
     texts = []
 
-    for material in materials:
-        # MEJORA CRUCIAL: Añadimos etiquetas semánticas claras para que el modelo
-        # entienda qué es una familia, qué es el nombre comercial y qué es el código.
-        text = f"FAMILIA: {material.family or ''} | NOMBRE: {material.commercial_name or ''} | COLOR: {material.color or ''} | CODIGO: {material.material_code or ''}".upper()
-
-        material_cache.append(material)
+    for m_id, family, commercial_name, color, material_code in materials_data:
+        # Mantener el mismo formato semántico e idéntico peso industrial que ya tenías
+        text = f"FAMILIA: {family or ''} | NOMBRE: {commercial_name or ''} | COLOR: {color or ''} | CODIGO: {material_code or ''}".upper()
+        local_ids.append(m_id)
         texts.append(text)
 
-    if texts:
+    try:
         current_model = get_model()
-        material_vectors = current_model.encode(
+        # Generación de la matriz vectorial
+        _MATERIAL_VECTORS = current_model.encode(
             texts,
-            show_progress_bar=False
+            show_progress_bar=False,
+            convert_to_numpy=True  # Forzar salida en NumPy directo para no acumular tensores pesados
         )
+        _MATERIAL_IDS = local_ids
         print(f"Embeddings creados con éxito: {len(texts)}")
+    except Exception as e:
+        print(f"Error crítico al construir el índice de materiales: {e}")
+        _MATERIAL_VECTORS = None
+        _MATERIAL_IDS = []
+    finally:
+        # Forzar la limpieza de los textos crudos de la memoria inmediatamente
+        del texts
+        gc.collect()
 
 
 def match_material(candidate_text):
-    global material_vectors
+    global _MATERIAL_VECTORS
+    global _MATERIAL_IDS
 
     if not candidate_text or str(candidate_text).strip() == "":
         return None
 
-    if material_vectors is None or len(material_cache) == 0:
+    # Si la matriz global no está lista en este hilo/proceso, la construimos de forma limpia
+    if _MATERIAL_VECTORS is None or len(_MATERIAL_IDS) == 0:
         build_material_index()
 
-    # Si la base de datos está vacía, evitamos que truene sklearn
-    if material_vectors is None:
+    if _MATERIAL_VECTORS is None or len(_MATERIAL_IDS) == 0:
         return None
 
-    current_model = get_model()
+    try:
+        current_model = get_model()
 
-    # Formateamos la búsqueda del candidato con el mismo peso semántico
-    search_query = f"FAMILIA: {candidate_text} | NOMBRE: {candidate_text}".upper()
+        # Construcción exacta del string de búsqueda candidato
+        search_query = f"FAMILIA: {candidate_text} | NOMBRE: {candidate_text}".upper()
 
-    candidate_vector = current_model.encode(
-        [search_query],
-        show_progress_bar=False
-    )
+        candidate_vector = current_model.encode(
+            [search_query],
+            show_progress_bar=False,
+            convert_to_numpy=True
+        )
 
-    similarities = cosine_similarity(
-        candidate_vector,
-        material_vectors
-    )[0]
+        # Medición matemática de similitud de cosenos
+        similarities = cosine_similarity(candidate_vector, _MATERIAL_VECTORS)[0]
 
-    best_idx = np.argmax(similarities)
-    best_score = similarities[best_idx]
+        best_idx = np.argmax(similarities)
+        best_score = similarities[best_idx]
+        confidence = round(float(best_score) * 100, 2)
 
-    confidence = round(float(best_score) * 100, 2)
+        # Liberación inmediata de variables temporales para mitigar SIGKILL en Railway
+        del candidate_vector
+        gc.collect()
 
-    # REGLA DE INGENIERÍA: Ajustamos un filtro estricto directamente en el buscador.
-    # Un 45% permitía que entrara cualquier plástico con el mismo color. Subimos a 70% mínimo.
-    if confidence < 70:
+        # Filtro de Confianza Estricto (70%)
+        if confidence < 70:
+            return None
+
+        # Como solo guardamos los enteros IDs en RAM, hacemos el fetch directo a la base de datos
+        # justo a tiempo únicamente para el material ganador.
+        target_id = _MATERIAL_IDS[best_idx]
+        matched_material_obj = Material.objects.get(id=target_id)
+
+        return {
+            "material": matched_material_obj,
+            "confidence": confidence
+        }
+
+    except Exception as run_error:
+        print(f"Error durante la ejecución del match de materiales: {run_error}")
         return None
-
-    return {
-        "material": material_cache[best_idx],
-        "confidence": confidence
-    }
