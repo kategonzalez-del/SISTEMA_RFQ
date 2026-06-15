@@ -299,6 +299,48 @@
         const block = document.getElementById('file-registry-block');
         const form = document.getElementById('rfq-hybrid-form');
     
+        // CORRECCIÓN GLOBAL: Declaramos explícitamente las referencias nativas de control de UI
+        window.toggleAllCheckboxes = function(masterCheckbox) {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+        };
+    
+        window.applyClassificationToSelected = function(type) {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            if (checkboxes.length === 0) { 
+                alert("Por favor, selecciona al menos un archivo marcando su casilla."); 
+                return; 
+            }
+            checkboxes.forEach(cb => {
+                const idx = parseInt(cb.value);
+                fileMetaTypes[idx] = (type === 'sub');
+                const selectField = document.getElementById(`file-select-${idx}`);
+                if (selectField) selectField.value = type;
+                cb.checked = false;
+            });
+            const masterCheck = document.getElementById('selectAllFiles');
+            if (masterCheck) masterCheck.checked = false;
+        };
+    
+        window.updateFileType = function(index, value) { 
+            fileMetaTypes[index] = (value === 'sub'); 
+        };
+        
+        window.dropIndexedFile = function(index) {
+            const freshStorage = new DataTransfer();
+            let freshMetaTypes = [];
+            Array.from(virtualStorage.files).forEach((file, idx) => {
+                if (idx !== index) { 
+                    freshStorage.items.add(file); 
+                    freshMetaTypes.push(fileMetaTypes[idx]); 
+                }
+            });
+            while(virtualStorage.items.length > 0) { virtualStorage.items.clear(); }
+            Array.from(freshStorage.files).forEach(file => virtualStorage.items.add(file));
+            fileMetaTypes = freshMetaTypes;
+            renderRegistry();
+        };
+
         zone.addEventListener('click', (e) => {
             e.preventDefault();
             if (zone.dataset.isClicking === "true") return; 
@@ -395,7 +437,7 @@
                 
                 if (initData.status === 'initiated') {
                     const analysisId = initData.analysis_id;
-                    currentActiveAnalysisId = analysisId; // Almacenamos el ID para poder cancelarlo de ser necesario
+                    currentActiveAnalysisId = analysisId;
                     
                     progressBarFill.style.width = `50%`;
                     progressPercentage.textContent = `50%`;
@@ -417,8 +459,23 @@
                                 progressStatusText.textContent = "Ejecutando match semántico por coseno y cálculo de pesos...";
                             }
                             
+                            // MEJORA FLUJO DE INGENIERÍA: 
+                            // En lugar de depender de la velocidad de un .stp individual, forzamos
+                            // la llamada a finalize-status únicamente cuando el backend confirme el término real.
                             if (statusData.status === 'completed') {
                                 clearInterval(checkInterval);
+                                progressBarFill.style.width = `90%`;
+                                progressPercentage.textContent = `90%`;
+                                progressStatusText.textContent = "Consolidando nomenclaturas industriales...";
+
+                                // Ejecutamos el cierre del lote de forma síncrona segura
+                                const finalizeRes = await fetch('/analisis/api/rfq/finalize-status/', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+                                    body: JSON.stringify({ 'analysis_id': analysisId })
+                                });
+                                const finalizeData = await finalizeRes.json();
+
                                 progressBarFill.style.width = `100%`;
                                 progressPercentage.textContent = `100%`;
                                 progressStatusText.textContent = "¡Análisis consolidado con éxito!";
@@ -426,7 +483,7 @@
                                 
                                 setTimeout(() => {
                                     window.location.href = window.location.pathname + `?history_id=${analysisId}`;
-                                }, 1500);
+                                }, 1000);
         
                             } else if (statusData.status === 'failed') {
                                 clearInterval(checkInterval);
@@ -449,7 +506,6 @@
             }
         });
 
-        // LÓGICA DEL BOTÓN DE CANCELAR ANÁLISIS
         document.getElementById('cancel-analysis-btn').addEventListener('click', async () => {
             if (!currentActiveAnalysisId) return;
             if (confirm("¿Estás seguro de que deseas abortar el análisis del lote actual?")) {
@@ -475,9 +531,6 @@
             }
         });
     
-        // =======================================================
-        // FUNCIÓN ASÍNCRONA: RENDERIZADO COMPLETO REQUERIMIENTO 2
-        // =======================================================
         function renderComponentRow(component) {
             const asyncComponentsTable = document.getElementById('async-components-table-body');
             const row = document.createElement('tr');

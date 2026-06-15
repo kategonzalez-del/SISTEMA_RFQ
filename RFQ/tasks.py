@@ -39,6 +39,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             volume_cm3 = threed_data.get('volume_cm3', 0)
             classification_string = f"{file_name}: 📐 Geometría 3D Indexada ({volume_cm3} cm³)"
             
+            # Guardamos la geometría matemática en la BD de forma segura
             DrawingDetectedMaterial.objects.create(
                 analysis=analysis,
                 part_number=os.path.splitext(file_name)[0],
@@ -49,8 +50,8 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 bom_reference=classification_string
             )
             
-            analysis.status = 'completed'
-            analysis.save()
+            # REPARACIÓN DE FLUJO: Eliminamos 'analysis.status = completed' de aquí 
+            # para evitar que cierre el lote antes de que el PDF y Gemini terminen.
             return {'success': True, 'type': '3d', 'file_name': file_name, 'classification': classification_string}
 
         # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
@@ -133,7 +134,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
 
                 volume_val = part.get('volume_cm3') or part.get('volume')
                 
-                # CONSOLIDACIÓN NPI: Heredamos volumen geométrico del .stp si el PDF no lo tiene escrito
+                # CONSOLIDACIÓN NPI: Heredamos el volumen geométrico extraído del archivo 3D (.stp)
                 if not volume_val:
                     threed_geom = DrawingDetectedMaterial.objects.filter(
                         analysis=analysis,
@@ -213,6 +214,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     'sugerencias': []
                 })
 
+            # Dejamos que el PDF marque completed para avisar al JavaScript que Gemini ya terminó
             analysis.status = 'completed'
             analysis.save()
             return {'success': True, 'type': 'pdf', 'file_name': file_name}
