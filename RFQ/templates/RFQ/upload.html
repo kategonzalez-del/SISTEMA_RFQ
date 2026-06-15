@@ -451,16 +451,15 @@
                                 return;
                             }
                             
-                            // 1. Consultamos el estado general y los componentes parciales acumulados en la BD
-                            const statusRes = await fetch(`/analisis/api/rfq/check-status/?analysis_id=${analysisId}`);
+                            // 1. Consultamos el estado y traemos datos progresivos en tiempo real
+                            const statusRes = await fetch(`{% url 'check_analysis_status' %}?analysis_id=${analysisId}`);
                             const statusData = await statusRes.json();
         
-                            // CAMBIO ESTRATÉGICO NPI: Si el backend ya guardó datos parciales en MySQL, 
-                            // los pintamos de inmediato en la tabla sin esperar a que termine el lote completo.
+                            // RENDER PROGRESIVO NPI: Si Celery ya guardó piezas, las pintamos sin esperar al PDF
                             if (statusData.components && statusData.components.length > 0) {
                                 document.getElementById('results-wrapper-block').classList.remove('d-none');
                                 const tableBody = document.getElementById('async-components-table-body');
-                                tableBody.innerHTML = ''; // Limpiamos para evitar duplicados
+                                tableBody.innerHTML = ''; // Limpiamos para evitar duplicados en cada ciclo
                                 
                                 statusData.components.forEach(comp => {
                                     renderComponentRow(comp);
@@ -479,10 +478,13 @@
                                 progressPercentage.textContent = `90%`;
                                 progressStatusText.textContent = "Consolidando nomenclaturas industriales...";
 
-                                // Ejecutamos el cierre definitivo del lote
-                                const finalizeRes = await fetch('/analisis/api/rfq/finalize-status/', {
+                                // 2. Cierre síncrono blindado contra errores 404 usando el reverse tag de Django
+                                const finalizeRes = await fetch("{% url 'RFQ:finalize_analysis_status' %}", {
                                     method: 'POST',
-                                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+                                    headers: { 
+                                        'Content-Type': 'application/json', 
+                                        'X-CSRFToken': getCookie('csrftoken') 
+                                    },
                                     body: JSON.stringify({ 'analysis_id': analysisId })
                                 });
                                 const finalizeData = await finalizeRes.json();
@@ -506,7 +508,7 @@
                                 submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Iniciar Nuevo Lote`;
                             }
                         } catch (pollError) {
-                            console.warn("Esperando respuesta estable del contenedor...", pollError);
+                            console.warn("Sincronizando respuesta estable con el contenedor...", pollError);
                         }
                     }, 3000);
                 }
@@ -521,7 +523,7 @@
             if (!currentActiveAnalysisId) return;
             if (confirm("¿Estás seguro de que deseas abortar el análisis del lote actual?")) {
                 try {
-                    const response = await fetch('/analisis/api/rfq/cancel/', {
+                    const response = await fetch("{% url 'RFQ:cancel_analysis' %}", {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
                         body: JSON.stringify({ 'analysis_id': currentActiveAnalysisId })
