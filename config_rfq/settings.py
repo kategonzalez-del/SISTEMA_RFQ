@@ -117,6 +117,7 @@ else:
 
 # --- CONFIGURACIÓN DE CELERY ---
 # En Railway usará REDIS_URL, localmente usará el localhost
+# --- CONFIGURACIÓN DE CELERY MAESTRA ---
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
 CELERY_BROKER_URL = REDIS_URL
@@ -124,6 +125,21 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
+
+# --- FORZAR PROCESAMIENTO UNO POR UNO (FILA INDIA) ---
+# Limita al contenedor a ejecutar estrictamente 1 sola tarea a la vez
+CELERY_WORKER_CONCURRENCY = 1
+
+# Desactiva el pre-guardado de tareas en caché para proteger la RAM
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# El worker se destruirá y liberará la RAM tras procesar exactamente 1 archivo
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 1
+
+# Límite estricto de seguridad: 250MB de RAM máxima por subproceso
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = 250000
+
+
 
 # --- API KEYS SEGURAS ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "django-insecure-+vqz2mpad(o$r*=df@rmflbxu$q(e@)!^(i^4z)+ik6v&tj1c5")

@@ -208,30 +208,37 @@ def check_analysis_status(request):
         
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
-        detected_items = analysis.detected_materials.all()
         
-        # Serializamos los renglones que ya se hayan guardado hasta este milisegundo
+        # Optimizamos la consulta usando values() para no consumir RAM del contenedor
+        detected_items = analysis.detected_materials.all().values(
+            'part_number', 'bom_reference', 'raw_material_text',
+            'detected_family', 'detected_color', 'component_weight', 'component_volumen',
+            'detected_material__commercial_name', 'detected_material__material_code'
+        )
+        
         components_payload = []
         for item in detected_items:
-            weight_lbs = round(float(item.component_weight) * 0.00220462, 4) if item.component_weight else None
+            weight_val = item['component_weight']
+            weight_lbs = round(float(weight_val) * 0.00220462, 4) if weight_val else None
+            
             components_payload.append({
-                'part_number': item.part_number,
-                'description': item.bom_reference.split('|')[0].strip(),
-                'bom_reference': item.bom_reference,
-                'detected_material': item.detected_material.commercial_name if item.detected_material else None,
-                'material_code': item.detected_material.material_code if item.detected_material else None,
-                'raw_material_text': item.raw_material_text,
-                'detected_family': item.detected_family,
-                'detected_color': item.detected_color,
-                'component_weight': item.component_weight,
+                'part_number': item['part_number'],
+                'description': item['bom_reference'].split('|')[0].strip() if item['bom_reference'] else 'Componente',
+                'bom_reference': item['bom_reference'],
+                'detected_material': item['detected_material__commercial_name'],
+                'material_code': item['detected_material__material_code'],
+                'raw_material_text': item['raw_material_text'],
+                'detected_family': item['detected_family'],
+                'detected_color': item['detected_color'],
+                'component_weight': weight_val,
                 'component_weight_lbs': weight_lbs,
-                'component_volumen': item.component_volumen,
+                'component_volumen': item['component_volumen'],
                 'alternative_resin': 'Evaluando...'
             })
 
         return JsonResponse({
             'status': analysis.status,
-            'components': components_payload # ¡Aquí viaja la información progresiva!
+            'components': components_payload
         })
     except Exception as e:
         return JsonResponse({'status': 'failed', 'error': str(e)}, status=500)

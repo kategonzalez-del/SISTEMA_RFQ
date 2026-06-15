@@ -1,4 +1,5 @@
 import os
+import gc  # Agrega esto al inicio del archivo
 import json
 import re
 import base64
