@@ -14,4 +14,5 @@ urlpatterns = [
     path('rfq/process-file-async/', process_single_file_async, name='process-file-async'),
     path('rfq/finalize-analysis/', views.finalize_analysis_status, name='finalize_analysis'),
     path('api/rfq/check-status/', views.check_analysis_status, name='check_analysis_status'),
+    path('analisis/api/rfq/cancel/', views.cancel_analysis_view, name='cancel_analysis')
 ]

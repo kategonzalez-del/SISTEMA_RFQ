@@ -220,3 +220,28 @@ def check_analysis_status(request):
     except Exception as e:
         # Añadimos este fallback para que si algo más falla, no rompa la comunicación HTTP
         return JsonResponse({'status': 'failed', 'error': str(e)}, status=500)
+    
+@csrf_exempt
+def cancel_analysis_view(request):
+    """
+    Endpoint para abortar el análisis actual y cambiar su estado a fallido,
+    permitiendo al usuario limpiar la interfaz inmediatamente.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método no permitido'}, status=405)
+    try:
+        data = json.loads(request.body)
+        analysis_id = data.get('analysis_id')
+        if not analysis_id:
+            return JsonResponse({'error': 'Falta el ID del análisis'}, status=400)
+            
+        analysis = DrawingAnalysis.objects.get(id=analysis_id)
+        analysis.status = 'failed'
+        analysis.material_text = "Análisis Cancelado por el Usuario"
+        analysis.save()
+        
+        return JsonResponse({'success': True, 'message': 'Análisis cancelado con éxito.'})
+    except DrawingAnalysis.DoesNotExist:
+        return JsonResponse({'error': 'Análisis no encontrado'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)

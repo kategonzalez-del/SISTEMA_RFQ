@@ -11,8 +11,12 @@
 <link rel="stylesheet" href="{% static 'css/RFQ/rfq.css' %}">
 <style>
     .batch-tool-btn { font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
-    .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; }
+    .dual-weight-box { font-size: 0.82rem; border-radius: 8px; padding: 10px; background-color: #f8fafc; border: 1px solid #e2e8f0; min-width: 140px; }
     .historical-badge { font-size: 0.68rem; font-weight: 500; display: block; margin-top: 4px; color: #64748b; font-family: 'Inter', sans-serif; }
+    .card-audit { border-radius: 8px; border-left: 4px solid #cbd5e1; }
+    .card-audit.matched { border-left-color: #10b981; background-color: #f0fdf4; }
+    .card-audit.unmatched { border-left-color: #ef4444; background-color: #fef2f2; }
+    .table-clean th { font-size: 0.78rem; text-uppercase: true; color: #64748b; letter-spacing: 0.5px; padding-bottom: 12px; }
 </style>
 {% endblock %}
 
@@ -77,9 +81,12 @@
                         <span class="small fw-medium text-muted" id="progress-status-text">Inicializando...</span>
                         <span class="small fw-bold text-primary" id="progress-percentage">0%</span>
                     </div>
-                    <div class="progress rounded-pill bg-light" style="height: 8px;">
+                    <div class="progress rounded-pill bg-light mb-3" style="height: 8px;">
                         <div id="progress-bar-fill" class="progress-bar bg-primary progress-bar-striped progress-bar-animated rounded-pill" role="progressbar" style="width: 0%"></div>
                     </div>
+                    <button type="button" id="cancel-analysis-btn" class="btn btn-sm btn-outline-danger w-100 py-2 small rounded-3">
+                        <i class="bi bi-x-circle me-1"></i> Cancelar Análisis
+                    </button>
                 </div>
 
                 <div class="border-top pt-4 mt-auto">
@@ -152,9 +159,9 @@
                         <thead>
                             <tr>
                                 <th style="width: 18%;">Número de Parte</th>
-                                <th style="width: 32%;">Descripción / Origen</th>
-                                <th style="width: 32%;">Especificaciones de Catálogo</th>
-                                <th style="width: 18%;" class="text-end pe-3">Peso / Volumen</th>
+                                <th style="width: 25%;">Descripción de Pieza</th>
+                                <th style="width: 37%;">Especificaciones de Catálogo</th>
+                                <th style="width: 20%;" class="text-end pe-3">Peso / Volumen</th>
                             </tr>
                         </thead>
                         <tbody id="async-components-table-body"></tbody>
@@ -163,7 +170,7 @@
             </div>
 
             {% if detected_components %}
-                <div class="card card-dashboard p-4 h-100 mt-4">
+                <div class="card card-dashboard p-4 h-100 mt-0">
                     <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4 flex-wrap gap-2">
                         <h5 class="fw-bold text-dark mb-0"><i class="bi bi-folder-check me-2 text-success"></i>Consulta de Historial: {{ filename }}</h5>
                         <span class="badge bg-success bg-opacity-10 text-success border border-success rounded-pill px-3 py-2 shadow-sm">Datos Recuperados</span>
@@ -174,9 +181,9 @@
                             <thead>
                                 <tr>
                                     <th style="width: 18%;">Número de Parte</th>
-                                    <th style="width: 32%;">Descripción / Origen</th>
-                                    <th style="width: 32%;">Especificaciones de Catálogo</th>
-                                    <th style="width: 18%;" class="text-end pe-3">Peso / Volumen</th>
+                                    <th style="width: 25%;">Descripción de Pieza</th>
+                                    <th style="width: 37%;">Especificaciones de Catálogo</th>
+                                    <th style="width: 20%;" class="text-end pe-3">Peso / Volumen</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -185,32 +192,38 @@
                                         <td class="fw-bold text-primary fs-6">{{ component.part_number|default:"Insumo / Adicional" }}</td>
                                         <td>
                                             <span class="d-block fw-bold text-dark mb-1">{{ component.bom_reference|split_origin_name }}</span>
-                                            <small class="text-muted d-block text-truncate" style="max-width: 250px; font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i> {{ component.bom_reference }}</small>
+                                            <small class="text-muted d-block text-wrap" style="font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i> {{ component.bom_reference }}</small>
                                         </td>
                                         <td>
-                                            <div class="p-3 card-audit shadow-sm bg-white">
-                                                {% if component.detected_material %}
-                                                    <div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo</span></div>
-                                                    <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;">{{ component.detected_material.commercial_name }}</h6>
-                                                {% else %}
-                                                    <div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
-                                                    <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Req: {{ component.raw_material_text }}</h6>
-                                                {% endif %}
-                                                <div class="p-2 bg-light rounded text-secondary mt-2" style="font-size: 0.75rem; border-left: 3px solid #64748b;">
-                                                    <strong>Ficha:</strong> Fam: {{ component.detected_family }} | Color: {{ component.detected_color }}
+                                            {% if component.detected_material %}
+                                                <div class="p-3 card-audit matched shadow-sm bg-white">
+                                                    <div class="mb-1.5"><span class="badge bg-success text-white px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo: {{ component.detected_material.material_code }}</span></div>
+                                                    <h6 class="text-dark fw-bold mb-1" style="font-size: 0.90rem;">{{ component.detected_material.commercial_name }}</h6>
+                                                    <div class="small text-muted mt-2" style="font-size: 0.72rem;">
+                                                        <strong>Familia:</strong> {{ component.detected_family }} | <strong>Color:</strong> {{ component.detected_color }}<br>
+                                                        <strong>Resina Alterna:</strong> {{ component.bom_reference|extract_alternate_name }}
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            {% else %}
+                                                <div class="p-3 card-audit unmatched shadow-sm bg-white">
+                                                    <div class="mb-1.5"><span class="badge bg-danger text-white px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
+                                                    <h6 class="text-danger fw-bold mb-1" style="font-size: 0.90rem;">Req: {{ component.raw_material_text }}</h6>
+                                                    <div class="small text-muted mt-2" style="font-size: 0.72rem;">
+                                                        <strong>Familia:</strong> {{ component.detected_family }} | <strong>Color:</strong> {{ component.detected_color }}<br>
+                                                        <strong>Resina Alterna:</strong> {{ component.bom_reference|extract_alternate_name }}
+                                                    </div>
+                                                </div>
+                                            {% endif %}
                                         </td>
                                         <td class="text-end pe-3">
                                             <div class="dual-weight-box text-start">
                                                 {% if component.component_weight %}
-                                                    <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> {{ component.component_weight }} g</div>
+                                                    <div class="mb-1 text-dark fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> {{ component.component_weight }} g</div>
                                                     <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> {{ component.component_weight|multiply_filter:0.00220462|round_filter:4 }} lbs</div>
                                                 {% else %}
-                                                    <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> N/D</div>
+                                                    <div class="mb-1 text-muted small"><i class="bi bi-box-seam me-1"></i> N/D</div>
                                                     <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> N/D</div>
                                                 {% endif %}
-                                                
                                                 <div class="fw-bold text-info border-top pt-1 mt-1">
                                                     <i class="bi bi-moisture me-1"></i> {% if component.component_volumen %}{{ component.component_volumen }} cm³{% else %}N/D{% endif %}
                                                 </div>
@@ -244,7 +257,7 @@
                                     <span class="text-muted d-block small mt-1" style="font-size: 0.75rem;">ID #{{ past.id }} • {{ past.uploaded_at }}</span>
                                 </div>
                                 <span class="badge {% if past.status == 'failed' %}badge-status-failed{% else %}badge-status-completed{% endif %} px-2 py-1 rounded-2 small shadow-sm">
-                                    {% if past.status == 'failed' %}✕ Fallido{% else %}✓ Éxito{% endif %}
+                                    {% if past.status == 'failed' %}✕ Abortado/Fallido{% else %}✓ Éxito{% endif %}
                                 </span>
                             </a>
                         {% endfor %}
@@ -261,9 +274,8 @@
 </div>
 
 <script>
-        // ==========================================
-        // 1. FUNCIÓN PARA OBTENER EL CSRF TOKEN DE LAS COOKIES
-        // ==========================================
+        let currentActiveAnalysisId = null;
+
         function getCookie(name) {
             let cookieValue = null;
             if (document.cookie && document.cookie !== '') {
@@ -287,14 +299,11 @@
         const block = document.getElementById('file-registry-block');
         const form = document.getElementById('rfq-hybrid-form');
     
-        // Manejador del candado para evitar doble apertura de archivos
         zone.addEventListener('click', (e) => {
             e.preventDefault();
             if (zone.dataset.isClicking === "true") return; 
             zone.dataset.isClicking = "true";
-            
             input.click();
-            
             setTimeout(() => { zone.dataset.isClicking = "false"; }, 500);
         });
         
@@ -302,7 +311,6 @@
         zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
         zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('dragover'); appendFiles(e.dataTransfer.files); });
         
-        // Limpieza de input tras selección
         input.addEventListener('change', (e) => { 
             appendFiles(e.target.files); 
             e.target.value = ''; 
@@ -355,43 +363,6 @@
             } else { block.classList.add('d-none'); }
         }
     
-        window.toggleAllCheckboxes = function(masterCheckbox) {
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
-        };
-    
-        window.applyClassificationToSelected = function(type) {
-            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-            
-            if (checkboxes.length === 0) { 
-                alert("Por favor, selecciona al menos un archivo marcando su casilla."); 
-                return; 
-            }
-    
-            checkboxes.forEach(cb => {
-                const idx = parseInt(cb.value);
-                fileMetaTypes[idx] = (type === 'sub');
-                document.getElementById(`file-select-${idx}`).value = type;
-                cb.checked = false;
-            });
-            
-            document.getElementById('selectAllFiles').checked = false;
-        };
-    
-        window.updateFileType = function(index, value) { fileMetaTypes[index] = (value === 'sub'); };
-    
-        window.dropIndexedFile = function(index) {
-            const freshStorage = new DataTransfer();
-            let freshMetaTypes = [];
-            Array.from(virtualStorage.files).forEach((file, idx) => {
-                if (idx !== index) { freshStorage.items.add(file); freshMetaTypes.push(fileMetaTypes[idx]); }
-            });
-            while(virtualStorage.items.length > 0) { virtualStorage.items.clear(); }
-            Array.from(freshStorage.files).forEach(file => virtualStorage.items.add(file));
-            fileMetaTypes = freshMetaTypes;
-            renderRegistry();
-        };
-    
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (virtualStorage.files.length === 0) { alert("Carga al menos un archivo técnico."); return; }
@@ -408,7 +379,7 @@
             
             progressBarFill.style.width = `10%`;
             progressPercentage.textContent = `10%`;
-            progressStatusText.textContent = "Subiendo archivos e iniciando IA...";
+            progressStatusText.textContent = "Subiendo lote e inicializando inteligencia artificial...";
         
             const initialFormData = new FormData();
             Array.from(virtualStorage.files).forEach(f => initialFormData.append('rfq_file', f));
@@ -416,7 +387,6 @@
             const typeMapping = {};
             Array.from(virtualStorage.files).forEach((file, idx) => { typeMapping[file.name] = fileMetaTypes[idx]; });
             initialFormData.append('manual_file_types', JSON.stringify(typeMapping));
-            
             initialFormData.append('csrfmiddlewaretoken', getCookie('csrftoken'));
         
             try {
@@ -425,77 +395,88 @@
                 
                 if (initData.status === 'initiated') {
                     const analysisId = initData.analysis_id;
+                    currentActiveAnalysisId = analysisId; // Almacenamos el ID para poder cancelarlo de ser necesario
                     
                     progressBarFill.style.width = `50%`;
                     progressPercentage.textContent = `50%`;
-                    progressStatusText.textContent = "Procesando geometría 3D y leyendo planos (Esto puede tardar unos minutos)...";
+                    progressStatusText.textContent = "Analizando geometrías e indexando catálogo de materiales...";
                     progressBarFill.classList.add('progress-bar-animated', 'progress-bar-striped');
         
                     const checkInterval = setInterval(async () => {
                         try {
+                            if (!currentActiveAnalysisId) {
+                                clearInterval(checkInterval);
+                                return;
+                            }
                             const statusRes = await fetch(`/analisis/api/rfq/check-status/?analysis_id=${analysisId}`);
                             const statusData = await statusRes.json();
         
+                            if (statusData.status === 'processing') {
+                                progressBarFill.style.width = `75%`;
+                                progressPercentage.textContent = `75%`;
+                                progressStatusText.textContent = "Ejecutando match semántico por coseno y cálculo de pesos...";
+                            }
+                            
                             if (statusData.status === 'completed') {
                                 clearInterval(checkInterval);
                                 progressBarFill.style.width = `100%`;
                                 progressPercentage.textContent = `100%`;
-                                progressStatusText.textContent = "¡Análisis completo! Cargando resultados...";
+                                progressStatusText.textContent = "¡Análisis consolidado con éxito!";
                                 progressBarFill.classList.replace('bg-primary', 'bg-success');
                                 
                                 setTimeout(() => {
-                                    window.location.href = `?history_id=${analysisId}`;
-                                }, 1000);
+                                    window.location.href = window.location.pathname + `?history_id=${analysisId}`;
+                                }, 1500);
         
                             } else if (statusData.status === 'failed') {
                                 clearInterval(checkInterval);
                                 progressBarFill.style.width = `100%`;
-                                progressStatusText.textContent = "Error al procesar los archivos en el servidor.";
+                                progressPercentage.textContent = `100%`;
+                                progressStatusText.textContent = "Análisis detenido o cancelado.";
                                 progressBarFill.classList.replace('bg-primary', 'bg-danger');
                                 submitBtn.disabled = false;
-                                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Reintentar Análisis`;
+                                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Iniciar Nuevo Lote`;
                             }
                         } catch (pollError) {
-                            console.warn("Fallo temporal en la conexión, reintentando en 3s...", pollError);
+                            console.warn("Retraso en la respuesta del contenedor...", pollError);
                         }
                     }, 3000);
                 }
             } catch (err) {
                 console.error(err);
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis y Consolidar Pesos`;
-                progressStatusText.textContent = "Error de red al intentar subir los archivos.";
+                submitBtn.innerHTML = `<i class="bi bi-cpu-fill me-2"></i> Ejecutar Análisis`;
+            }
+        });
+
+        // LÓGICA DEL BOTÓN DE CANCELAR ANÁLISIS
+        document.getElementById('cancel-analysis-btn').addEventListener('click', async () => {
+            if (!currentActiveAnalysisId) return;
+            if (confirm("¿Estás seguro de que deseas abortar el análisis del lote actual?")) {
+                try {
+                    const response = await fetch('/analisis/api/rfq/cancel/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+                        body: JSON.stringify({ 'analysis_id': currentActiveAnalysisId })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        currentActiveAnalysisId = null;
+                        document.getElementById('progress-bar-fill').style.width = `100%`;
+                        document.getElementById('progress-bar-fill').classList.replace('bg-primary', 'bg-danger');
+                        document.getElementById('progress-percentage').textContent = 'Abortado';
+                        document.getElementById('progress-status-text').textContent = "Operación cancelada por el usuario corporativo.";
+                        document.getElementById('submit-btn').disabled = false;
+                        document.getElementById('submit-btn').innerHTML = `<i class="bi bi-play-circle-fill me-2"></i> Ejecutar Consolidación de Pesos`;
+                    }
+                } catch (err) {
+                    console.error("Error al enviar la solicitud de cancelación:", err);
+                }
             }
         });
     
-        function renderRowAnalysisError(filename, customErrorMessage) {
-            const asyncComponentsTable = document.getElementById('async-components-table-body');
-            const rowError = document.createElement('tr');
-            const motivoError = customErrorMessage || "Los algoritmos de visión no lograron estructurar datos legibles (Resultados Null).";
-            rowError.innerHTML = `
-                <td class="text-center"><i class="bi bi-x-circle-fill text-danger fs-5"></i></td>
-                <td><strong class="text-dark d-block small">${filename}</strong></td>
-                <td>
-                    <div class="alert alert-danger mb-0 p-2 text-start rounded-3 small" style="border-left: 4px solid #dc3545;">
-                        <strong>Fallo de Escaneo:</strong> ${motivoError}
-                    </div>
-                </td>
-                <td class="text-end text-muted small pe-3">N/D</td>
-            `;
-            asyncComponentsTable.appendChild(rowError);
-        }
-    
-        document.getElementById('catalogSearchInput').addEventListener('keyup', function(e) {
-            const value = e.target.value.toLowerCase().trim();
-            const rows = document.querySelectorAll('#catalogTable tbody tr');
-            rows.forEach(row => {
-                const match = row.textContent.toLowerCase().includes(value);
-                row.style.display = match ? '' : 'none';
-            });
-        });
-
         // =======================================================
-        // FUNCIÓN CLAVE NPI: INYECCIÓN ASÍNCRONA DE PESO Y VOLUMEN
+        // FUNCIÓN ASÍNCRONA: RENDERIZADO COMPLETO REQUERIMIENTO 2
         // =======================================================
         function renderComponentRow(component) {
             const asyncComponentsTable = document.getElementById('async-components-table-body');
@@ -504,31 +485,43 @@
             const weightGrams = component.component_weight ? `${component.component_weight} g` : 'N/D';
             const weightLbs = component.component_weight_lbs ? `${component.component_weight_lbs} lbs` : 'N/D';
             const volumeCm3 = component.component_volumen ? `${component.component_volumen} cm³` : 'N/D';
+            const altResin = component.alternative_resin || 'Ninguna registrada';
         
+            let materialCardHTML = '';
+            if (component.detected_material) {
+                materialCardHTML = `
+                    <div class="p-3 card-audit matched shadow-sm bg-white">
+                        <div class="mb-1.5"><span class="badge bg-success text-white px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo: ${component.material_code || 'N/D'}</span></div>
+                        <h6 class="text-dark fw-bold mb-1" style="font-size: 0.90rem;">${component.detected_material}</h6>
+                        <div class="small text-muted mt-2" style="font-size: 0.72rem;">
+                            <strong>Familia:</strong> ${component.detected_family || 'N/D'} | <strong>Color:</strong> ${component.detected_color || 'N/D'}<br>
+                            <strong>Resina Alterna:</strong> ${altResin}
+                        </div>
+                    </div>
+                `;
+            } else {
+                materialCardHTML = `
+                    <div class="p-3 card-audit unmatched shadow-sm bg-white">
+                        <div class="mb-1.5"><span class="badge bg-danger text-white px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
+                        <h6 class="text-danger fw-bold mb-1" style="font-size: 0.90rem;">Req: ${component.raw_material_text}</h6>
+                        <div class="small text-muted mt-2" style="font-size: 0.72rem;">
+                            <strong>Familia:</strong> ${component.detected_family || 'N/D'} | <strong>Color:</strong> ${component.detected_color || 'N/D'}<br>
+                            <strong>Resina Alterna:</strong> ${altResin}
+                        </div>
+                    </div>
+                `;
+            }
+
             row.innerHTML = `
                 <td class="fw-bold text-primary fs-6">${component.part_number || "Insumo / Adicional"}</td>
                 <td>
-                    <span class="d-block fw-bold text-dark mb-1">${component.description}</span>
-                    <small class="text-muted d-block text-truncate" style="max-width: 250px; font-size: 0.72rem;">
-                        <i class="bi bi-info-circle me-1"></i> ${component.bom_reference}
-                    </small>
+                    <span class="d-block fw-bold text-dark mb-1">${component.description || 'Componente'}</span>
+                    <small class="text-muted d-block text-wrap" style="font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i> ${component.bom_reference}</small>
                 </td>
-                <td>
-                    <div class="p-3 card-audit shadow-sm bg-white">
-                        ${component.detected_material 
-                            ? `<div class="mb-1.5"><span class="badge bg-success bg-opacity-10 text-success border border-success px-2 py-0.5 rounded-2 fw-bold">✓ Match Catálogo</span></div>
-                               <h6 class="text-dark fw-bold mb-1" style="font-size: 0.95rem;">${component.detected_material}</h6>`
-                            : `<div class="mb-1.5"><span class="badge bg-danger bg-opacity-10 text-danger border border-danger px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
-                               <h6 class="text-danger fw-bold mb-1" style="font-size: 0.95rem;">Req: ${component.raw_material_text}</h6>`
-                        }
-                        <div class="p-2 bg-light rounded text-secondary mt-2" style="font-size: 0.75rem; border-left: 3px solid #64748b;">
-                            <strong>Ficha:</strong> Fam: ${component.detected_family} | Color: ${component.detected_color}
-                        </div>
-                    </div>
-                </td>
+                <td>${materialCardHTML}</td>
                 <td class="text-end pe-3">
                     <div class="dual-weight-box text-start">
-                        <div class="mb-1 text-slate-900 fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> ${weightGrams}</div>
+                        <div class="mb-1 text-dark fw-bold"><i class="bi bi-box-seam text-primary me-1"></i> ${weightGrams}</div>
                         <div class="mb-1 text-muted font-monospace small"><i class="bi bi-scales me-1"></i> ${weightLbs}</div>
                         <div class="fw-bold text-info border-top pt-1 mt-1"><i class="bi bi-moisture me-1"></i> ${volumeCm3}</div>
                     </div>
