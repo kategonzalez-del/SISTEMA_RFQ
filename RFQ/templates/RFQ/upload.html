@@ -452,7 +452,7 @@
                             }
                             
                             // 1. Consultamos el estado y traemos datos progresivos en tiempo real
-                            const statusRes = await fetch(`{% url 'check_analysis_status' %}?analysis_id=${analysisId}`);
+                            const statusRes = await fetch("{% url 'RFQ:check_analysis_status' %}?analysis_id=" + analysisId);
                             const statusData = await statusRes.json();
         
                             // RENDER PROGRESIVO NPI: Si Celery ya guardó piezas, las pintamos sin esperar al PDF
