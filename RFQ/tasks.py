@@ -58,6 +58,9 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             else:
                 threed_data = analyze_stl(file_path)
 
+            if not threed_data.get("ok"):
+                raise Exception(threed_data.get("error", "Error desconocido procesando geometría 3D"))
+
             volume_cm3 = threed_data.get('volume_cm3', 0)
             classification_string = f"{file_name}: 📐 Geometría 3D Indexada ({volume_cm3} cm³)"
 
