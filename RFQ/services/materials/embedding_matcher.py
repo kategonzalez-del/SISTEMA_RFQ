@@ -3,8 +3,8 @@ import os
 import gc
 import json
 import numpy as np
+import redis
 from datetime import datetime, timezone
-from django.conf import settings
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from RFQ.models import Material
@@ -12,11 +12,23 @@ from RFQ.models import Material
 _MODEL_INSTANCE = None
 _MATERIAL_IDS = []
 _MATERIAL_VECTORS = None
+_redis_client = None
 
-CACHE_DIR = os.path.join(settings.MEDIA_ROOT, "ai_cache")
-VECTORS_PATH = os.path.join(CACHE_DIR, "material_vectors.npy")
-IDS_PATH = os.path.join(CACHE_DIR, "material_ids.json")
-META_PATH = os.path.join(CACHE_DIR, "material_meta.json")
+# Usa la misma variable de entorno que ya usas para el broker de Celery
+REDIS_URL = os.environ.get("REDIS_URL") or os.environ.get("CELERY_BROKER_URL")
+
+VECTORS_KEY = "rfq:material_embeddings:vectors"
+IDS_KEY = "rfq:material_embeddings:ids"
+META_KEY = "rfq:material_embeddings:meta"
+
+
+def get_redis_client():
+    global _redis_client
+    if _redis_client is None:
+        if not REDIS_URL:
+            raise RuntimeError("No se encontró REDIS_URL ni CELERY_BROKER_URL en el entorno.")
+        _redis_client = redis.from_url(REDIS_URL)
+    return _redis_client
 
 
 def get_model():
@@ -27,38 +39,48 @@ def get_model():
     return _MODEL_INSTANCE
 
 
-def _save_cache_to_disk(ids, vectors):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    np.save(VECTORS_PATH, vectors)
-    with open(IDS_PATH, 'w') as f:
-        json.dump(ids, f)
-    with open(META_PATH, 'w') as f:
-        json.dump({"count": len(ids), "built_at": datetime.now(timezone.utc).isoformat()}, f)
+def _save_cache_to_redis(ids, vectors):
+    r = get_redis_client()
+    meta = {
+        "count": len(ids),
+        "shape": list(vectors.shape),
+        "dtype": str(vectors.dtype),
+        "built_at": datetime.now(timezone.utc).isoformat(),
+    }
+    r.set(VECTORS_KEY, vectors.tobytes())
+    r.set(IDS_KEY, json.dumps(ids))
+    r.set(META_KEY, json.dumps(meta))
 
 
-def _load_cache_from_disk():
-    """Devuelve (ids, vectors) si hay una caché válida en disco, o (None, None)."""
+def _load_cache_from_redis():
+    """Devuelve (ids, vectors) si hay una caché válida en Redis, o (None, None)."""
     try:
-        if not (os.path.exists(VECTORS_PATH) and os.path.exists(IDS_PATH)):
+        r = get_redis_client()
+        raw_vectors = r.get(VECTORS_KEY)
+        raw_ids = r.get(IDS_KEY)
+        raw_meta = r.get(META_KEY)
+        if not raw_vectors or not raw_ids or not raw_meta:
             return None, None
-        vectors = np.load(VECTORS_PATH)
-        with open(IDS_PATH, 'r') as f:
-            ids = json.load(f)
+
+        meta = json.loads(raw_meta)
+        vectors = np.frombuffer(raw_vectors, dtype=meta["dtype"]).reshape(meta["shape"])
+        ids = json.loads(raw_ids)
+
         if len(ids) != vectors.shape[0]:
             return None, None
+
         return ids, vectors
     except Exception as e:
-        print(f"No se pudo leer la caché de embeddings desde disco: {e}")
+        print(f"No se pudo leer la caché de embeddings desde Redis: {e}")
         return None, None
 
 
 def build_material_index(force=False):
     """
     Genera la matriz de vectores. Si force=False (caso normal en los workers),
-    intenta primero cargar desde disco para evitar recalcular 928 textos
-    cada vez que arranca un proceso nuevo.
-    force=True se usa SOLO desde el management command de importación,
-    cuando sabes que los materiales cambiaron y necesitas reconstruir de verdad.
+    intenta primero cargar desde Redis para evitar recalcular 928 textos
+    cada vez que arranca un proceso nuevo, sea en sistema_rfq o en celery_worker.
+    force=True se usa SOLO desde el management command de importación.
     """
     global _MATERIAL_IDS
     global _MATERIAL_VECTORS
@@ -66,11 +88,11 @@ def build_material_index(force=False):
     current_count = Material.objects.count()
 
     if not force:
-        cached_ids, cached_vectors = _load_cache_from_disk()
+        cached_ids, cached_vectors = _load_cache_from_redis()
         if cached_ids is not None and len(cached_ids) == current_count:
             _MATERIAL_IDS = cached_ids
             _MATERIAL_VECTORS = cached_vectors
-            print(f"Embeddings cargados desde caché en disco ({len(cached_ids)} materiales, sin recalcular)")
+            print(f"Embeddings cargados desde Redis ({len(cached_ids)} materiales, sin recalcular)")
             return
 
     materials_data = Material.objects.values_list('id', 'family', 'commercial_name', 'color', 'material_code')
@@ -92,8 +114,8 @@ def build_material_index(force=False):
         vectors = current_model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
         _MATERIAL_VECTORS = vectors
         _MATERIAL_IDS = local_ids
-        _save_cache_to_disk(local_ids, vectors)
-        print(f"Embeddings creados y guardados en caché: {len(texts)}")
+        _save_cache_to_redis(local_ids, vectors)
+        print(f"Embeddings creados y guardados en Redis: {len(texts)}")
     except Exception as e:
         print(f"Error crítico al construir el índice de materiales: {e}")
         _MATERIAL_VECTORS = None
