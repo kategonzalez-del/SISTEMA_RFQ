@@ -479,7 +479,7 @@
                                 progressStatusText.textContent = "Consolidando nomenclaturas industriales...";
 
                                 // 2. Cierre síncrono blindado contra errores 404 usando el reverse tag de Django
-                                const finalizeRes = await fetch("{% url 'RFQ:finalize_analysis_status' %}", {
+                                const finalizeRes = await fetch(`/analisis/api/rfq/finalize-status/`, {
                                     method: 'POST',
                                     headers: { 
                                         'Content-Type': 'application/json', 
@@ -523,7 +523,7 @@
             if (!currentActiveAnalysisId) return;
             if (confirm("¿Estás seguro de que deseas abortar el análisis del lote actual?")) {
                 try {
-                    const response = await fetch("{% url 'RFQ:cancel_analysis' %}", {
+                    const response = await fetch(`/analisis/api/rfq/cancel/`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
                         body: JSON.stringify({ 'analysis_id': currentActiveAnalysisId })
@@ -554,6 +554,7 @@
             const altResin = component.alternative_resin || 'Ninguna registrada';
         
             let materialCardHTML = '';
+            // CORRECCIÓN CLAVE: Leemos el string directo 'detected_material' que envía views.py
             if (component.detected_material) {
                 materialCardHTML = `
                     <div class="p-3 card-audit matched shadow-sm bg-white">
@@ -569,7 +570,7 @@
                 materialCardHTML = `
                     <div class="p-3 card-audit unmatched shadow-sm bg-white">
                         <div class="mb-1.5"><span class="badge bg-danger text-white px-2 py-0.5 rounded-2 fw-bold">✕ No Registrado</span></div>
-                        <h6 class="text-danger fw-bold mb-1" style="font-size: 0.90rem;">Req: ${component.raw_material_text}</h6>
+                        <h6 class="text-danger fw-bold mb-1" style="font-size: 0.90rem;">Req: ${component.raw_material_text || 'No especificado'}</h6>
                         <div class="small text-muted mt-2" style="font-size: 0.72rem;">
                             <strong>Familia:</strong> ${component.detected_family || 'N/D'} | <strong>Color:</strong> ${component.detected_color || 'N/D'}<br>
                             <strong>Resina Alterna:</strong> ${altResin}
@@ -594,7 +595,7 @@
                 </td>
             `;
             asyncComponentsTable.appendChild(row);
-        }    
+        }  
     </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 {% endblock %}
