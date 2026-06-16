@@ -4,6 +4,7 @@ import gc
 import json
 import re
 import base64
+import traceback
 from django.conf import settings
 from django.db.models import F
 from celery import shared_task
@@ -17,35 +18,41 @@ from RFQ.services.cad.stl_parser import analyze_stl
 
 
 def mark_file_done_and_check_batch(analysis_id):
-    """
-    Incremento atómico (a nivel de BD) de processed_files.
-    Solo cierra el lote como 'completed' si TODOS los archivos
-    ya llegaron y el lote no fue marcado como 'failed' por otra tarea.
-    """
     DrawingAnalysis.objects.filter(id=analysis_id).update(
         processed_files=F('processed_files') + 1
     )
     analysis = DrawingAnalysis.objects.get(id=analysis_id)
-    if analysis.status != 'failed' and analysis.processed_files >= analysis.total_files:
+    if analysis.processed_files >= analysis.total_files:
         analysis.status = 'completed'
         analysis.save()
 
 
 @shared_task
 def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subcomponent_manual):
-    try:
-        analysis = DrawingAnalysis.objects.get(id=analysis_id)
-        local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
-        os.makedirs(local_dir, exist_ok=True)
+    analysis = DrawingAnalysis.objects.get(id=analysis_id)
+    local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
+    os.makedirs(local_dir, exist_ok=True)
+    file_path = os.path.join(local_dir, file_name)
 
-        file_path = os.path.join(local_dir, file_name)
+    try:
         with open(file_path, 'wb') as f:
             f.write(base64.b64decode(file_base64.encode('utf-8')))
+    except Exception as e:
+        print(f"[ERROR ESCRITURA] {file_name}: {e}\n{traceback.format_exc()}")
+        DrawingDetectedMaterial.objects.create(
+            analysis=analysis,
+            part_number=os.path.splitext(file_name)[0],
+            raw_material_text="Error",
+            detected_family="N/D",
+            detected_color="N/D",
+            bom_reference=f"{file_name}: ⚠ No se pudo guardar el archivo ({str(e)[:150]})"
+        )
+        mark_file_done_and_check_batch(analysis.id)
+        return {'success': False, 'file_name': file_name, 'error': str(e)}
 
-        classification_string = f"{file_name}: 🧩 Subcomponente 2D" if is_subcomponent_manual else f"{file_name}: 🏢 Plano de Ensamble Maestro"
-
-        # CASO 1: ARCHIVOS 3D
-        if ext in ['.step', '.stp', '.stl']:
+    # CASO 1: ARCHIVOS 3D
+    if ext in ['.step', '.stp', '.stl']:
+        try:
             if ext in ['.step', '.stp']:
                 threed_data = analyze_step(file_path)
             else:
@@ -67,12 +74,23 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             mark_file_done_and_check_batch(analysis.id)
             return {'success': True, 'type': '3d', 'file_name': file_name, 'classification': classification_string}
 
-        # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
-        elif ext == '.pdf':
-            raw_text = extract_text_from_pdf(file_path)
+        except Exception as e:
+            print(f"[ERROR 3D] {file_name}: {e}\n{traceback.format_exc()}")
+            DrawingDetectedMaterial.objects.create(
+                analysis=analysis,
+                part_number=os.path.splitext(file_name)[0],
+                raw_material_text="Geometría 3D",
+                detected_family="N/D",
+                detected_color="N/D",
+                bom_reference=f"{file_name}: ⚠ Error al procesar geometría 3D ({str(e)[:150]})"
+            )
+            mark_file_done_and_check_batch(analysis.id)
+            return {'success': False, 'type': '3d', 'file_name': file_name, 'error': str(e)}
 
-            # CORREGIDO: concatenamos en vez de sobrescribir, así no perdemos
-            # el texto de PDFs anteriores del mismo lote
+    # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
+    elif ext == '.pdf':
+        try:
+            raw_text = extract_text_from_pdf(file_path)
             previous_text = analysis.raw_text or ""
             analysis.raw_text = previous_text + f"\n--- ORIGEN: {file_name} ---\n" + raw_text
 
@@ -103,7 +121,6 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             elif isinstance(raw_data, dict):
                 parts_list = raw_data.get('parts', raw_data.get('part_numbers', [raw_data] if 'part_number' in raw_data else []))
 
-            parts_found_payload = []
             for part in parts_list:
                 part_num = part.get('part_number') or part.get('part_number_base')
                 part_desc = part.get('name') or part.get('description') or ''
@@ -122,8 +139,6 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     alt_resin_name = 'Ninguna registrada'
 
                 matched_material_db = None
-                is_matched_via_alternate = False
-
                 if isinstance(commercial_name_ia, str) and commercial_name_ia.strip():
                     match_result = match_material(commercial_name_ia)
                     if match_result and match_result["confidence"] >= 70:
@@ -133,10 +148,8 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     alt_match_result = match_material(alt_resin_name)
                     if alt_match_result and alt_match_result["confidence"] >= 70:
                         matched_material_db = alt_match_result["material"]
-                        is_matched_via_alternate = True
 
                 volume_val = part.get('volume_cm3') or part.get('volume')
-
                 if not volume_val:
                     threed_geom = DrawingDetectedMaterial.objects.filter(
                         analysis=analysis,
@@ -144,7 +157,6 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     ).first()
                     if threed_geom and threed_geom.component_volumen:
                         volume_val = threed_geom.component_volumen
-
                 if not volume_val:
                     volume_val = local_volume
 
@@ -173,7 +185,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
 
                 ref_secundarios = f" | Lleva: {', '.join(secondary_text_list)}" if secondary_text_list else ""
 
-                db_component = DrawingDetectedMaterial.objects.create(
+                DrawingDetectedMaterial.objects.create(
                     analysis=analysis,
                     part_number=part_num,
                     raw_material_text=commercial_name_ia if commercial_name_ia else part_desc,
@@ -193,33 +205,18 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                         quantity=part.get('quantity', 1)
                     )
 
-                weight_lbs = round(float(weight_val) * 0.00220462, 4) if weight_val else None
-
-                parts_found_payload.append({
-                    'part_number': part_num or "Insumo / Adicional",
-                    'description': part_desc,
-                    'bom_reference': db_component.bom_reference,
-                    'alternative_resin': alt_resin_name,
-                    'data_source': data_source_flag,
-                    'detected_material': matched_material_db.commercial_name if matched_material_db else None,
-                    'material_code': matched_material_db.material_code if matched_material_db else None,
-                    'raw_material_text': commercial_name_ia if commercial_name_ia else "No especificado",
-                    'detected_family': db_component.detected_family,
-                    'detected_color': db_component.detected_color,
-                    'component_weight': db_component.component_weight,
-                    'component_weight_lbs': weight_lbs,
-                    'component_volumen': db_component.component_volumen,
-                    'color_completo': color_ia,
-                    'is_matched_via_alternate': is_matched_via_alternate,
-                    'secondary_elements': secondary_text_list,
-                    'sugerencias': []
-                })
-
             mark_file_done_and_check_batch(analysis.id)
             return {'success': True, 'type': 'pdf', 'file_name': file_name}
 
-    except Exception as e:
-        if 'analysis' in locals():
-            analysis.status = 'failed'
-            analysis.save()
-        return {'success': False, 'error': str(e)}
+        except Exception as e:
+            print(f"[ERROR PDF] {file_name}: {e}\n{traceback.format_exc()}")
+            DrawingDetectedMaterial.objects.create(
+                analysis=analysis,
+                part_number=os.path.splitext(file_name)[0],
+                raw_material_text="Error",
+                detected_family="N/D",
+                detected_color="N/D",
+                bom_reference=f"{file_name}: ⚠ Error al procesar PDF ({str(e)[:150]})"
+            )
+            mark_file_done_and_check_batch(analysis.id)
+            return {'success': False, 'type': 'pdf', 'file_name': file_name, 'error': str(e)}
