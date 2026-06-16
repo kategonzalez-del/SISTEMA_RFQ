@@ -128,7 +128,8 @@ class Material(models.Model):
 
 
 class DrawingAnalysis(models.Model):
-
+    total_files = models.IntegerField(default=0)
+    processed_files = models.IntegerField(default=0)
     uploaded_file = models.FileField(
         upload_to='rfq_drawings/'
     )

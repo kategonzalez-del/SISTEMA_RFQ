@@ -1,33 +1,47 @@
+# tasks.py
 import os
-import gc  # Agrega esto al inicio del archivo
+import gc
 import json
 import re
 import base64
 from django.conf import settings
+from django.db.models import F
 from celery import shared_task
-from django.db.models import Q
 from .models import DrawingAnalysis, DrawingDetectedMaterial, PartComponent, Material
 
-# Importaciones diferidas dentro de la tarea para que no pesen al arrancar Django
 from RFQ.services.parsers.pdf_parser import extract_text_from_pdf, extract_volume, extract_weight
 from RFQ.services.ai.structured_extractor import extract_rfq_data
 from RFQ.services.materials.embedding_matcher import match_material
 from RFQ.services.cad.step_parser import analyze_step
 from RFQ.services.cad.stl_parser import analyze_stl
 
+
+def mark_file_done_and_check_batch(analysis_id):
+    """
+    Incremento atómico (a nivel de BD) de processed_files.
+    Solo cierra el lote como 'completed' si TODOS los archivos
+    ya llegaron y el lote no fue marcado como 'failed' por otra tarea.
+    """
+    DrawingAnalysis.objects.filter(id=analysis_id).update(
+        processed_files=F('processed_files') + 1
+    )
+    analysis = DrawingAnalysis.objects.get(id=analysis_id)
+    if analysis.status != 'failed' and analysis.processed_files >= analysis.total_files:
+        analysis.status = 'completed'
+        analysis.save()
+
+
 @shared_task
 def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subcomponent_manual):
     try:
         analysis = DrawingAnalysis.objects.get(id=analysis_id)
         local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
-        os.makedirs(local_dir, exist_ok=True) 
-        
+        os.makedirs(local_dir, exist_ok=True)
+
         file_path = os.path.join(local_dir, file_name)
-        
-        # RECONSTRUIMOS EL ARCHIVO ORIGINAL A PARTIR DEL TEXTO ENVIADO
         with open(file_path, 'wb') as f:
             f.write(base64.b64decode(file_base64.encode('utf-8')))
-        
+
         classification_string = f"{file_name}: 🧩 Subcomponente 2D" if is_subcomponent_manual else f"{file_name}: 🏢 Plano de Ensamble Maestro"
 
         # CASO 1: ARCHIVOS 3D
@@ -36,11 +50,10 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 threed_data = analyze_step(file_path)
             else:
                 threed_data = analyze_stl(file_path)
-            
+
             volume_cm3 = threed_data.get('volume_cm3', 0)
             classification_string = f"{file_name}: 📐 Geometría 3D Indexada ({volume_cm3} cm³)"
-            
-            # Guardamos la geometría matemática en la BD de forma segura
+
             DrawingDetectedMaterial.objects.create(
                 analysis=analysis,
                 part_number=os.path.splitext(file_name)[0],
@@ -50,22 +63,23 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 component_volumen=round(float(volume_cm3), 2) if volume_cm3 else None,
                 bom_reference=classification_string
             )
-            
-            # REPARACIÓN DE FLUJO: Eliminamos 'analysis.status = completed' de aquí 
-            # para evitar que cierre el lote antes de que el PDF y Gemini terminen.
+
+            mark_file_done_and_check_batch(analysis.id)
             return {'success': True, 'type': '3d', 'file_name': file_name, 'classification': classification_string}
 
         # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
         elif ext == '.pdf':
             raw_text = extract_text_from_pdf(file_path)
-            
-            # CORRECCIÓN ENTORNO LIMPIO: Evitamos acumular basura de PDFs viejos del mismo lote
-            analysis.raw_text = f"--- ORIGEN: {file_name} ---\n" + raw_text
-            
+
+            # CORREGIDO: concatenamos en vez de sobrescribir, así no perdemos
+            # el texto de PDFs anteriores del mismo lote
+            previous_text = analysis.raw_text or ""
+            analysis.raw_text = previous_text + f"\n--- ORIGEN: {file_name} ---\n" + raw_text
+
             clean_text_for_regex = re.sub(r'MASSE\s*:\s*WEIGHT', 'WEIGHT', raw_text, flags=re.IGNORECASE)
             local_volume = extract_volume(raw_text)
             local_weight = extract_weight(clean_text_for_regex) or extract_weight(raw_text)
-            
+
             if local_volume and not analysis.estimated_volume:
                 analysis.estimated_volume = local_volume
             if local_weight and not analysis.estimated_weight:
@@ -88,45 +102,33 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 parts_list = raw_data
             elif isinstance(raw_data, dict):
                 parts_list = raw_data.get('parts', raw_data.get('part_numbers', [raw_data] if 'part_number' in raw_data else []))
-                
+
             parts_found_payload = []
             for part in parts_list:
                 part_num = part.get('part_number') or part.get('part_number_base')
                 part_desc = part.get('name') or part.get('description') or ''
-                clean_part_key = str(part_num).strip().upper() if part_num else ""
-                
+
                 material_data = part.get('materials', [{}])[0] if part.get('materials') else part.get('material', {})
                 if not isinstance(material_data, dict):
                     material_data = {"name": str(material_data)}
-                    
+
                 commercial_name_ia = material_data.get('material_name') or material_data.get('name') or ''
                 resin_family_ia = material_data.get('resin_family') or material_data.get('family') or ''
                 color_ia = material_data.get('color') or ''
-                supplier_ia = material_data.get('supplier') or 'No especificado'
-                
+
                 alt_material_data = part.get('alternative_material_suggestions', [{}])[0] if part.get('alternative_material_suggestions') else {}
                 alt_resin_name = alt_material_data.get('name', '')
                 if not alt_resin_name or alt_resin_name.upper() == 'NULL':
                     alt_resin_name = 'Ninguna registrada'
 
-                # SOPORTE MULTI-MATERIAL: Clasificamos según las reglas de la IA
-                detected_type = "RESIN"
-                if resin_family_ia.upper() in ['PAINT', 'TINTA', 'INK']:
-                    detected_type = "PAINT"
-                elif resin_family_ia.upper() in ['PIGMENT', 'MASTERBATCH', 'PIGMENTO']:
-                    detected_type = "PIGMENT"
-                elif resin_family_ia.upper() in ['METAL', 'INSERT']:
-                    detected_type = "METAL"
-
                 matched_material_db = None
                 is_matched_via_alternate = False
-                
-                # Buscador semántico con umbral estricto para evitar mezclas
+
                 if isinstance(commercial_name_ia, str) and commercial_name_ia.strip():
                     match_result = match_material(commercial_name_ia)
                     if match_result and match_result["confidence"] >= 70:
                         matched_material_db = match_result["material"]
-                
+
                 if not matched_material_db and alt_resin_name and alt_resin_name != 'Ninguna registrada':
                     alt_match_result = match_material(alt_resin_name)
                     if alt_match_result and alt_match_result["confidence"] >= 70:
@@ -134,8 +136,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                         is_matched_via_alternate = True
 
                 volume_val = part.get('volume_cm3') or part.get('volume')
-                
-                # CONSOLIDACIÓN NPI: Heredamos el volumen geométrico extraído del archivo 3D (.stp)
+
                 if not volume_val:
                     threed_geom = DrawingDetectedMaterial.objects.filter(
                         analysis=analysis,
@@ -146,17 +147,16 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
 
                 if not volume_val:
                     volume_val = local_volume
-                        
+
                 weight_val = part.get('weight_grams') or part.get('weight')
                 data_source_flag = "Extraído de Plano PDF"
 
-                # Cálculo de masa basado en volumen de ingeniería y densidad de catálogo
                 if volume_val and not weight_val:
                     density = matched_material_db.density if matched_material_db and matched_material_db.density else 1.05
                     try:
                         weight_val = float(volume_val) * float(density)
                         data_source_flag = f"Peso Estimado ({volume_val} cm³ x {density} g/cm³)"
-                    except:
+                    except Exception:
                         weight_val = None
 
                 secondary_components = part.get('secondary_embedded_components', [])
@@ -207,7 +207,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     'detected_family': db_component.detected_family,
                     'detected_color': db_component.detected_color,
                     'component_weight': db_component.component_weight,
-                    'component_weight_lbs': weight_lbs, 
+                    'component_weight_lbs': weight_lbs,
                     'component_volumen': db_component.component_volumen,
                     'color_completo': color_ia,
                     'is_matched_via_alternate': is_matched_via_alternate,
@@ -215,9 +215,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                     'sugerencias': []
                 })
 
-            # Dejamos que el PDF marque completed para avisar al JavaScript que Gemini ya terminó
-            analysis.status = 'completed'
-            analysis.save()
+            mark_file_done_and_check_batch(analysis.id)
             return {'success': True, 'type': 'pdf', 'file_name': file_name}
 
     except Exception as e:

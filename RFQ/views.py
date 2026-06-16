@@ -73,14 +73,13 @@ def upload_and_process_rfq(request):
         if not primary_pdf_name and all_saved_files:
             primary_pdf_name = all_saved_files[0]['name']
 
-        # 2. Creamos el registro de análisis usando el archivo físico ya guardado.
-        # Al pasarle una cadena (el nombre) en lugar del objeto 'u_file' crudo, 
-        # Django no intentará buscar nada en la carpeta temporal /tmp/ del contenedor.
+        # views.py — al crear el análisis
         analysis = DrawingAnalysis.objects.create(
             uploaded_file=f"tmp/{primary_pdf_name}",
             raw_text="",
             gemini_raw_json={},
-            status='processing'
+            status='processing',
+            total_files=len(all_saved_files),   
         )
 
         is_subcomponent_manual = False
