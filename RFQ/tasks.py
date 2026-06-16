@@ -29,6 +29,8 @@ def mark_file_done_and_check_batch(analysis_id):
 
 @shared_task
 def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subcomponent_manual):
+    print(f"[TASK] Archivo: {file_name}")
+    print(f"[TASK] Extensión: {ext}")
     analysis = DrawingAnalysis.objects.get(id=analysis_id)
     local_dir = os.path.join(settings.MEDIA_ROOT, 'tmp')
     os.makedirs(local_dir, exist_ok=True)
@@ -52,6 +54,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
 
     # CASO 1: ARCHIVOS 3D
     if ext in ['.step', '.stp', '.stl']:
+        print(f"[3D] Entró al bloque 3D: {file_name}")
         try:
             if ext in ['.step', '.stp']:
                 threed_data = analyze_step(file_path)
@@ -73,10 +76,10 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
                 component_volumen=round(float(volume_cm3), 2) if volume_cm3 else None,
                 bom_reference=classification_string
             )
-
+            print(f"[3D] Resultado: {threed_data}")
             mark_file_done_and_check_batch(analysis.id)
             return {'success': True, 'type': '3d', 'file_name': file_name, 'classification': classification_string}
-
+            
         except Exception as e:
             print(f"[ERROR 3D] {file_name}: {e}\n{traceback.format_exc()}")
             DrawingDetectedMaterial.objects.create(
@@ -89,7 +92,7 @@ def process_file_in_background(analysis_id, file_name, file_base64, ext, is_subc
             )
             mark_file_done_and_check_batch(analysis.id)
             return {'success': False, 'type': '3d', 'file_name': file_name, 'error': str(e)}
-
+        
     # CASO 2: PLANOS TÉCNICOS 2D (.PDF)
     elif ext == '.pdf':
         try:

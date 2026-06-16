@@ -4,33 +4,13 @@ import multiprocessing as mp
 
 def _step_worker(file_path, result_queue):
     try:
-        print(f"[STEP] Analizando {file_path}")
-
         from cadquery import importers
-
-        print("[STEP] CadQuery cargado")
-
         model = importers.importStep(file_path)
-
-        print("[STEP] STEP importado")
-
         solid = model.val()
-
         volume_cm3 = solid.Volume() / 1000
-
-        result_queue.put({
-            "ok": True,
-            "volume_cm3": round(volume_cm3, 2)
-        })
-
+        result_queue.put({"ok": True, "volume_cm3": round(volume_cm3, 2)})
     except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-
-        result_queue.put({
-            "ok": False,
-            "error": str(e)
-        })
+        result_queue.put({"ok": False, "error": str(e)})
 
 
 def analyze_step(file_path, timeout=120):
